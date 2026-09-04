@@ -27,3 +27,7 @@ export {
   type AgentRunStatus,
   type AgentStepRecord,
 } from './loop';
+export {
+  createSessionNavigationPolicy,
+  type SessionNavigationPolicy,
+} from './session-policy';

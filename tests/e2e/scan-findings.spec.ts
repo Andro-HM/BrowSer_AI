@@ -31,10 +31,15 @@ test('renders a concise multi-region summary and blocks on a critical credential
   extContext,
   panel,
 }) => {
+  // A scan on a page with undescribed painted content loads BOTH local engines on first
+  // use: the 11.7 MB ONNX detector (plus the ORT wasm it instantiates) and Tesseract's
+  // core + language data. That one-time cost is why the visual-accuracy specs already
+  // wait 30 s; this one waits on the whole scan, so it gets the model-load budget too.
+  test.setTimeout(180_000);
   await openTestPage(extContext, SAMPLE_HTML);
   await panel.getByRole('button', { name: 'Scan Page' }).dispatchEvent('click');
 
-  await expect(panel.getByText('Scan: ✓ Complete')).toBeVisible();
+  await expect(panel.getByText('Scan: ✓ Complete')).toBeVisible({ timeout: 120_000 });
 
   // Text detection runs without a viewport capture, so these aliases are deterministic.
   for (const alias of [

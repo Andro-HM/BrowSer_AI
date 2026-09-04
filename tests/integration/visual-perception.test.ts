@@ -279,3 +279,75 @@ describe('pipeline fails soft', () => {
     await expect(service().run(snapshot())).resolves.toMatchObject({ status: 'unavailable' });
   });
 });
+
+// The model gate (docs/m3-visual-perception.md) rejected a bundled detector, but the
+// provider boundary it exercised stays. Any future heavy backend fails in exactly two
+// ways — it cannot be constructed, or it throws on a region — and BOTH must degrade to
+// an honest result rather than a crash or an invented label.
+describe('vision provider failure degrades honestly', () => {
+  const twoRegions = snapshot({
+    candidates: [
+      candidate({ rect: { x: 0, y: 0, width: 300, height: 200 } }),
+      candidate({ rect: { x: 400, y: 0, width: 300, height: 200 } }),
+    ],
+  });
+
+  it('reports a provider that cannot be constructed instead of throwing', async () => {
+    registerVisualProvider(() => Promise.reject(new Error('model asset missing')));
+
+    const result = await service().run(snapshot());
+
+    expect(result.status).toBe('unavailable');
+    expect(result.supported).toBe(false);
+    expect(result.reason).toBe('visual_provider_unavailable');
+    expect(result.reasonDetail).toBe('model asset missing');
+    expect(result.observations).toEqual([]);
+    expect(result.metrics.regionsProcessed).toBe(0);
+    // The regions were genuinely selected — that count is not rewritten to hide the failure.
+    expect(result.metrics.regionsSelected).toBe(1);
+  });
+
+  it('attempts a failed provider load once per run, not once per region', async () => {
+    const factory = vi.fn(() => Promise.reject(new Error('wasm init refused')));
+    registerVisualProvider(factory);
+
+    await service().run(twoRegions);
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps pixel bytes out of a provider-failure diagnostic', async () => {
+    registerVisualProvider(() =>
+      Promise.reject(new Error('failed to decode data:image/png;base64,SECRETPIXELS')),
+    );
+
+    const result = await service().run(snapshot());
+    expect(result.reasonDetail).toBe('redacted_error');
+    expect(JSON.stringify(result)).not.toContain('SECRETPIXELS');
+  });
+
+  it('leaves a region unanalysed when the provider throws on it, and completes the rest', async () => {
+    analyze.mockRejectedValueOnce(new Error('inference failed'));
+
+    const result = await service().run(twoRegions);
+
+    expect(result.status).toBe('completed');
+    // One region analysed, one honestly skipped — never a fabricated observation.
+    expect(result.observations).toHaveLength(1);
+    expect(result.metrics.regionsSelected).toBe(2);
+    expect(result.metrics.regionsProcessed).toBe(1);
+  });
+
+  it('does not cache a region the provider failed on', async () => {
+    const instance = service();
+    analyze.mockRejectedValueOnce(new Error('inference failed'));
+
+    const first = await instance.run(snapshot());
+    expect(first.metrics.regionsProcessed).toBe(0);
+
+    // Same pixels, healthy provider: the region must be re-analysed, not served from cache.
+    const second = await instance.run(snapshot());
+    expect(second.metrics.regionsFromCache).toBe(0);
+    expect(second.metrics.regionsProcessed).toBe(1);
+    expect(second.observations).toHaveLength(1);
+  });
+});

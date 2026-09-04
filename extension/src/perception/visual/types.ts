@@ -41,6 +41,12 @@ export interface RasterizeOptions {
   viewportWidth: number;
   /** Longest edge of the produced raster (enforces minimal analysis resolution). */
   maxEdge: number;
+  /**
+   * Lower bound on the longest edge — a smaller crop is UPSCALED to reach it (capped
+   * by `MAX_UPSCALE`). Set only on the OCR path, where sub-legible pixels yield zero
+   * words. Absent ⇒ never upscale.
+   */
+  minEdge?: number;
 }
 
 /** Crops one region out of a capture and downscales it for analysis. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runAgentLoop, toSanitizedNodes } from '../../extension/src/agent/loop';
+import { createSessionNavigationPolicy } from '../../extension/src/agent/session-policy';
 import { createDeterministicPlanner } from '../../extension/src/agent/planner';
 import { createActionBridge } from '../../extension/src/actions';
 import { createPrivacyFirewall } from '../../extension/src/firewall';
@@ -351,5 +352,61 @@ describe('toSanitizedNodes', () => {
     expect(gated?.label).toBeUndefined();
     expect(gated?.filled).toBe(true);
     expect(button).toMatchObject({ tag: 'button', label: 'Submit', filled: false });
+  });
+
+  // A scan that reports no structure at all (older content script, a page with no
+  // controls, or a partial response) must yield an EMPTY node list — never `undefined`
+  // leaking into the request, and never a fabricated node.
+  it('returns an empty list when the structure is missing or empty', () => {
+    expect(toSanitizedNodes(undefined)).toEqual([]);
+    expect(toSanitizedNodes([])).toEqual([]);
+  });
+});
+
+describe('session navigation policy (per-run handle)', () => {
+  it('defaults to an empty (deny-all) allowlist and isolates runs from each other', () => {
+    const first = createSessionNavigationPolicy();
+    const second = createSessionNavigationPolicy();
+    expect(first.get()).toEqual([]);
+
+    first.set(['https://a.test']);
+    // No shared module-level state: publishing in one run cannot widen the other.
+    expect(first.get()).toEqual(['https://a.test']);
+    expect(second.get()).toEqual([]);
+  });
+
+  it('copies on write and hands out a frozen list the holder cannot widen', () => {
+    const policy = createSessionNavigationPolicy();
+    const source = ['https://a.test'];
+    policy.set(source);
+    source.push('https://evil.test');
+    expect(policy.get()).toEqual(['https://a.test']);
+    expect(() => (policy.get() as string[]).push('https://evil.test')).toThrow();
+  });
+
+  it('receives the origin the loop derived, which is what the bridge validates against', async () => {
+    const page = fakePage();
+    const navigationPolicy = createSessionNavigationPolicy();
+    const vault = createLocalVault();
+    // No explicit allowlist ⇒ the loop derives the scanned page's own origin.
+    page.scan = async () => ({
+      pageText: `Reach me at ${CANARY_EMAIL}`,
+      snapshot: { url: 'https://site.test/form?x=1', viewport: { width: 1280, height: 800 }, domTextLength: 0, candidates: [] },
+      structure: [],
+    });
+    const result = await runAgentLoop({
+      task: 'do nothing here',
+      sessionId: 'nav-handle-session',
+      vault,
+      gateway: createDeterministicPlanner(),
+      bridge: createActionBridge({ vault, sendToPage: page.executor }),
+      firewall: createPrivacyFirewall(),
+      scan: page.scan,
+      navigationPolicy,
+    });
+
+    expect(result.status).toBe('completed');
+    // Origin only — never the full URL (a path/query can carry content).
+    expect(navigationPolicy.get()).toEqual(['https://site.test']);
   });
 });

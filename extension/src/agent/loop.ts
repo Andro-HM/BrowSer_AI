@@ -23,11 +23,12 @@ import type { ScanPageResponse } from '../types/messages';
 import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
 import type { ActionBridge } from '../actions';
 import { detectLabeledValues, detectPII } from '../perception/pii';
+import { DEFAULT_PRIVACY_MODE } from '../policy/modes';
 import { enforcePrivacy } from '../sanitizer';
 import type { LocalVault } from '../vault';
 import type { PrivacyFirewall } from '../firewall';
 import type { AgentGateway } from './index';
-import { setNavigationAllowlist } from './session-policy';
+import type { SessionNavigationPolicy } from './session-policy';
 
 /** One executed step, recorded for the UI/audit. Alias-level only — never a resolved value. */
 export interface AgentStepRecord {
@@ -81,6 +82,14 @@ export interface AgentLoopOptions {
    * (origin only, never the full URL). Empty when no origin is known (fail closed).
    */
   navigationAllowlist?: string[];
+  /**
+   * Where the per-step allowlist is PUBLISHED so a bridge built earlier validates against
+   * the current one (`createSessionNavigationPolicy()`). Owned by the caller, shared with
+   * exactly that run's bridge. Omitted ⇒ nothing is published: the request still carries
+   * the derived contract, and the bridge keeps whatever policy it was built with — which
+   * for `DEFAULT_ACTION_POLICY` means NAVIGATE stays denied (fail closed).
+   */
+  navigationPolicy?: SessionNavigationPolicy;
   /** Observe the active tab (wraps the SCAN_PAGE relay). Injectable for tests. */
   scan: () => Promise<ScanPageResponse>;
   /** Privacy-event sink (telemetry lands in M7; the loop only emits structured events). */
@@ -184,7 +193,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
     if (!enforcement.enforced) return stop('not_enforced', 'FINDINGS_UNRESOLVED');
 
     // Navigation allowlist: explicit option wins; otherwise the scanned page's own
-    // origin (same-site navigation only). Shared with the bridge's policy provider.
+    // origin (same-site navigation only). Published to the run's navigation-policy
+    // handle, which is the bridge's policy provider.
     let allowlist = options.navigationAllowlist ?? [];
     if (options.navigationAllowlist === undefined && observed.snapshot?.url) {
       try {
@@ -193,7 +203,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
         allowlist = [];
       }
     }
-    setNavigationAllowlist(allowlist);
+    options.navigationPolicy?.set(allowlist);
 
     let pageOrigin: string | undefined;
     if (observed.snapshot?.url) {
@@ -204,7 +214,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
       }
     }
 
-    // 3 — build the sanitized request.
+    // 3 — build the sanitized request, carrying this task's privacy contract (M6).
     const request: RemoteAgentRequest = {
       taskObjective: options.task,
       pageOrigin,
@@ -212,7 +222,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
       sanitizedVisibleText: enforcement.sanitizedText,
       aliases: enforcement.aliases,
       availableActions: [...ALLOWED_ACTION_KINDS],
-      policy: { privacyMode: 'strict', navigationAllowlist: allowlist },
+      policy: { privacyMode: DEFAULT_PRIVACY_MODE, navigationAllowlist: allowlist },
     };
 
     // 4 — firewall: the only path to egress. A deny stops the loop, visibly.

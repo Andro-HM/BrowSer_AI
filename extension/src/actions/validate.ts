@@ -14,18 +14,27 @@ export interface ValidationResult {
   reason: string;
 }
 
+/**
+ * The LOCAL enforcement side of a `TaskPrivacyContract`: the same navigation rule the
+ * contract states, plus the bounds that only matter on-device. Read-only — a validator
+ * never mutates its policy, and nothing may widen an allowlist it was handed.
+ */
 export interface ActionPolicy {
   /** NAVIGATE is denied unless the URL starts with one of these https prefixes. */
-  navigationAllowlist: string[];
+  readonly navigationAllowlist: readonly string[];
   /** |SCROLL.amount| is clamped/rejected above this bound. */
-  maxScroll: number;
+  readonly maxScroll: number;
 }
 
-/** Default M6 policy: navigation fully denied, bounded scrolling. */
-export const DEFAULT_ACTION_POLICY: ActionPolicy = {
-  navigationAllowlist: [],
+/**
+ * Default M6 policy: navigation fully denied, bounded scrolling. FROZEN — it is
+ * module-level shared state, so an accidental (or hostile) `push` into its allowlist must
+ * not be able to grant navigation process-wide.
+ */
+export const DEFAULT_ACTION_POLICY: ActionPolicy = Object.freeze({
+  navigationAllowlist: Object.freeze([]) as readonly string[],
   maxScroll: 10_000,
-};
+});
 
 const MAX_SELECTOR_LENGTH = 512;
 const MAX_TYPED_VALUE_LENGTH = 4096;

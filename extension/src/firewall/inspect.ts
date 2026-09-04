@@ -7,7 +7,9 @@
 // What the firewall can honestly establish (and how):
 //   1. STRUCTURE — the payload is exactly a `RemoteAgentRequest`: every expected key,
 //      correctly typed, and NO extra keys (a compromised/malicious planner cannot
-//      smuggle payload through unspecified fields).
+//      smuggle payload through unspecified fields). This includes the M6 task privacy
+//      contract: `privacyMode` must name a regime the implementation actually defines,
+//      and the navigation allowlist must be a plain string array.
 //   2. ALIAS SHAPE — every alias matches the semantic `USER_<CATEGORY>_<n>` grammar;
 //      an alias field is a type, never a value.
 //   3. CONTENT SCAN — the same local PII detector used on-page (M2 `detectPII`) runs
@@ -23,6 +25,7 @@
 
 import type { RemoteAgentRequest } from '../types/contracts';
 import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
+import { isPrivacyMode } from '../policy/modes';
 import { detectPII } from '../perception/pii';
 
 export interface FirewallVerdict {
@@ -76,6 +79,24 @@ function isValidNode(node: unknown): boolean {
     }
   }
   return true;
+}
+
+/**
+ * Structural check on the task privacy contract — mirrors `TaskPrivacyContract`.
+ * `privacyMode` must be a mode the implementation actually DEFINES (not merely a string):
+ * an unknown regime cannot be honoured, so it is refused rather than passed through. The
+ * allowlist must be a string array (its entries are separately re-validated per NAVIGATE
+ * action by `validateActionPolicy`), and no extra key may ride along.
+ */
+function isValidContract(policy: unknown): boolean {
+  if (typeof policy !== 'object' || policy === null) return false;
+  const p = policy as Record<string, unknown>;
+  if (!isPrivacyMode(p['privacyMode'])) return false;
+  const allowlist = p['navigationAllowlist'];
+  if (!Array.isArray(allowlist) || !allowlist.every((entry) => typeof entry === 'string')) {
+    return false;
+  }
+  return Object.keys(p).every((key) => key === 'privacyMode' || key === 'navigationAllowlist');
 }
 
 /**
@@ -160,12 +181,7 @@ export function createPrivacyFirewall(): PrivacyFirewall {
       }
 
       const policy = r['policy'];
-      if (
-        typeof policy !== 'object' ||
-        policy === null ||
-        typeof (policy as Record<string, unknown>)['privacyMode'] !== 'string' ||
-        !Array.isArray((policy as Record<string, unknown>)['navigationAllowlist'])
-      ) {
+      if (!isValidContract(policy)) {
         return Promise.resolve(deny('FIREWALL_MALFORMED'));
       }
 

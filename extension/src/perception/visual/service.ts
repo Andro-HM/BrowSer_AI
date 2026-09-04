@@ -33,16 +33,20 @@ import { VisualRegionCache, computeRasterDigest } from './cache';
 import { detectVisualCapabilities, preferredBackend } from './capability';
 import { decideVisualPerception } from './decision';
 import { createBrowserRasterizer } from './raster';
-import { MAX_ANALYSIS_EDGE, MAX_REGIONS, OCR_ANALYSIS_EDGE, selectRegions } from './regions';
+import { MAX_ANALYSIS_EDGE, MAX_REGIONS, OCR_ANALYSIS_EDGE, OCR_MIN_ANALYSIS_EDGE, selectRegions } from './regions';
 import { planBelowFoldBands } from './bands';
-import { disposeVisualProvider, resolveVisualProvider } from './providers/registry';
+import {
+  disposeVisualProvider,
+  resolveVisualProvider,
+  visualProviderAnalysisEdge,
+} from './providers/registry';
 import {
   isVisualContentAnalyzerAvailable,
   resolveVisualContentAnalyzer,
 } from './content-analyzer';
 import { mapRasterBboxToRegion } from './coords';
 import { BROWSER_RESTRICTION_REASON, isRestrictedUrl } from './restricted';
-import type { RasterizeFn, VisualCapabilities } from './types';
+import type { RasterizeFn, VisualCapabilities, VisualProvider } from './types';
 import { ocrTrace } from '../../diag/ocr-trace';
 
 export interface VisualPerceptionDeps {
@@ -87,14 +91,15 @@ function clamp01(n: number): number {
 }
 
 /**
- * Reduce a caught capture error to a SHORT, non-sensitive diagnostic for the trace. The
- * value is a Chrome API failure string or a structured code (e.g. NO_ACTIVE_TAB) — never
- * pixels — but we still defensively strip anything that looks like image bytes and cap the
- * length so no capture payload can ever ride out through a log line.
+ * Reduce a caught error to a SHORT, non-sensitive diagnostic for the trace and result.
+ * The value is an API failure string or a structured code (e.g. NO_ACTIVE_TAB) — never
+ * pixels — but we still defensively strip anything that looks like image bytes (replacing
+ * the whole message with `redactedAs`) and cap the length, so no capture payload can ever
+ * ride out through a log line or a result field.
  */
-function safeCaptureError(err: unknown): string {
+function safeErrorDetail(err: unknown, redactedAs = 'redacted_error'): string {
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : 'unknown';
-  if (/data:image|base64/i.test(raw)) return 'capture_error';
+  if (/data:image|base64/i.test(raw)) return redactedAs;
   return raw.slice(0, 120);
 }
 
@@ -214,6 +219,38 @@ export function createVisualPerceptionService(
     try {
       const backend = preferredBackend(capabilities);
       const viewportWidth = snapshot.viewport?.width ?? 0;
+      // A real content engine is registered ⇒ pixel density matters. Otherwise the
+      // default analyzer returns `not_available` and extra pixels would buy nothing.
+      const ocrPath = isVisualContentAnalyzerAvailable();
+      // A registered vision MODEL declares the raster edge it needs (see
+      // `VisualProviderRegistration`). Reading it costs nothing — it is registration
+      // metadata, not the model — so laziness is preserved.
+      const providerEdge = visualProviderAnalysisEdge();
+      const maxAnalysisEdge = Math.max(
+        ocrPath ? OCR_ANALYSIS_EDGE : MAX_ANALYSIS_EDGE,
+        providerEdge ?? 0,
+      );
+      const minAnalysisEdge = Math.max(ocrPath ? OCR_MIN_ANALYSIS_EDGE : 0, providerEdge ?? 0);
+
+      // The vision provider still loads lazily — on the first region that has real
+      // pixels — but the load is memoized for the run and, crucially, CANNOT throw at
+      // our caller. A broken provider (missing model asset, refused wasm init, failed
+      // dynamic import) is the expected failure mode for any future heavy backend, so
+      // it is recorded once and surfaced as a structured `unavailable` result below.
+      let provider: VisualProvider | null = null;
+      let providerLoadError: string | null = null;
+      const loadProvider = async (): Promise<VisualProvider | null> => {
+        if (provider !== null) return provider;
+        if (providerLoadError !== null) return null;
+        try {
+          provider = await resolveVisualProvider();
+          return provider;
+        } catch (err) {
+          providerLoadError = safeErrorDetail(err);
+          ocrTrace('VISION_PROVIDER_UNAVAILABLE', { detail: providerLoadError });
+          return null;
+        }
+      };
 
       // Analyse one captured viewport: `entries` pair the pixel-crop rect (band-relative)
       // with the region carrying the geometry everything downstream should see.
@@ -224,9 +261,14 @@ export function createVisualPerceptionService(
         for (const { crop, region } of entries) {
           const raster = await rasterize(captureDataUrl, crop, {
             viewportWidth,
-            // OCR needs pixel density: elevate the analysis edge ONLY when a content
-            // analyzer is registered, so the default (no-engine) pipeline is unchanged.
-            maxEdge: isVisualContentAnalyzerAvailable() ? OCR_ANALYSIS_EDGE : MAX_ANALYSIS_EDGE,
+            // OCR needs pixel density; a vision model needs its trained input edge.
+            // Both are honoured by taking the larger requirement — the default
+            // (no engine, no model) pipeline keeps the original structural budget.
+            maxEdge: maxAnalysisEdge,
+            // A 48px avatar left at its natural size carries glyphs far below the
+            // cap-height Tesseract needs, which is why small regions used to yield zero
+            // words. On the OCR path they are UPSCALED to a legible floor.
+            ...(minAnalysisEdge > 0 ? { minEdge: minAnalysisEdge } : {}),
           });
           if (raster === null) continue;
 
@@ -249,8 +291,18 @@ export function createVisualPerceptionService(
           }
 
           // 7. First heavy work in the pipeline — provider loads lazily, here.
-          const provider = await resolveVisualProvider();
-          const regionObservations = await provider.analyze(raster, region, backend);
+          const vision = await loadProvider();
+          // Provider is dead for this whole run: stop, never fabricate observations.
+          if (vision === null) return;
+          let regionObservations: VisualObservation[];
+          try {
+            regionObservations = await vision.analyze(raster, region, backend);
+          } catch {
+            // Provider loaded but failed on THIS region. Leave the region unanalysed
+            // and uncached rather than inventing a label; metrics show it as selected
+            // but not processed.
+            continue;
+          }
 
           // 7b. Genuine OCR/vision content analysis over the SAME raster. With no engine
           //     registered this returns `not_available` and zero findings — never faked.
@@ -306,7 +358,7 @@ export function createVisualPerceptionService(
           // fine. We surface a single deterministic, structured code as the RESULT reason —
           // never the raw error text — but we DO record the short, sanitized API diagnostic
           // in the trace AND on the result so the actual cause is visible to the user.
-          const detail = safeCaptureError(err);
+          const detail = safeErrorDetail(err, 'capture_error');
           ocrTrace('CAPTURE_FAILED', {
             band: 'viewport',
             reason: 'VISUAL_CAPTURE_UNAVAILABLE',
@@ -360,6 +412,24 @@ export function createVisualPerceptionService(
         regionsProcessed: processed,
         regionsFromCache: fromCache,
       });
+
+      // The provider could not be constructed and nothing was analysed. Report that
+      // plainly instead of a `completed` run with an empty observation list.
+      if (providerLoadError !== null && processed === 0) {
+        return {
+          status: 'unavailable',
+          supported: false,
+          reason: 'visual_provider_unavailable',
+          reasonDetail: providerLoadError,
+          observations,
+          metrics: metrics({
+            candidatesConsidered: candidateCount,
+            regionsSelected: totalRegions,
+            regionsFromCache: fromCache,
+            durationMs: elapsed(),
+          }),
+        };
+      }
 
       return {
         status: 'completed',

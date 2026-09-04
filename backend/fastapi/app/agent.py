@@ -52,8 +52,15 @@ class AliasBinding(BaseModel):
     category: str
 
 
-class ActionPolicy(BaseModel):
-    privacyMode: str
+class TaskPrivacyContract(BaseModel):
+    """Mirror of the extension's `TaskPrivacyContract` (M6).
+
+    `privacyMode` is a Literal, not a free string: an unknown regime cannot be honoured,
+    so the request is rejected (422) rather than served under a mode nothing implements.
+    An empty `navigationAllowlist` means navigation is denied — the fail-closed default.
+    """
+
+    privacyMode: Literal["strict"]
     navigationAllowlist: list[str] = []
 
 
@@ -68,7 +75,7 @@ class PlanRequest(BaseModel):
     availableActions: list[
         Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
     ]
-    policy: ActionPolicy
+    policy: TaskPrivacyContract
 
 
 class TypeAction(BaseModel):

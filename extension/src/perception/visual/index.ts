@@ -28,7 +28,14 @@ export {
   registerVisualProvider,
   resetVisualProviders,
   resolveVisualProvider,
+  visualProviderAnalysisEdge,
 } from './providers/registry';
+
+// NOTE: `./providers/vision-onnx` is deliberately NOT re-exported here. This barrel is
+// what the side panel imports, and a static re-export would pull the vision module into
+// the panel's chunk, defeating the lazy `import()` in `register-vision.ts` (rollup says
+// so out loud: INEFFECTIVE_DYNAMIC_IMPORT). Production installs the model through
+// `installVisionEngine()`; tests import the provider from its own path.
 
 export type {
   RasterRegion,
@@ -40,3 +47,4 @@ export type {
   VisualProvider,
   VisualProviderFactory,
 } from './types';
+export type { VisualProviderRegistration } from './providers/registry';

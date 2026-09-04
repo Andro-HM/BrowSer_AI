@@ -83,7 +83,32 @@ export interface DomVisualSnapshot {
 export type VisualObservationLabel =
   | 'text_like_content'
   | 'graphic_content'
-  | 'low_information';
+  | 'low_information'
+  /**
+   * A local vision MODEL localized ≥1 discrete UI element inside the region.
+   * Emitted only by a real detector (never by pixel heuristics), and only as a
+   * statement about STRUCTURE — "there are separable elements here" — never about
+   * what they contain or whether they are sensitive.
+   */
+  | 'ui_elements';
+
+/**
+ * One element a local vision model localized inside a region.
+ *
+ * Geometry + confidence ONLY, in the same viewport CSS-pixel space as
+ * `VisualRegion`, so it is safe to surface upward for exactly the reason the
+ * header of this file gives: a rectangle is not content. There is deliberately no
+ * `label` field — the bundled detector has a single "interactable element" class,
+ * and inventing finer classes from it would be fabrication (CONTRIBUTING.md §22).
+ */
+export interface VisualElementBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Detector score, 0–1, as reported by the model. Never rescaled upward. */
+  confidence: number;
+}
 
 export interface VisualObservation {
   type: 'visual_observation';
@@ -93,6 +118,16 @@ export interface VisualObservation {
   confidence: number;
   /** Always true: the observation was produced entirely on-device. */
   local: true;
+  /**
+   * Sub-region element geometry from a local vision model, when one is registered.
+   * ABSENT (not empty) when no model ran — the pipeline never reports zero elements
+   * as if a detector had looked and found none.
+   */
+  elements?: VisualElementBox[];
+  /** Name of the model that produced `elements`, e.g. `omniparser-icon-detect`. */
+  model?: string;
+  /** Execution provider the model actually ran on for this region. */
+  backend?: 'webgpu' | 'wasm' | 'cpu';
 }
 
 export type VisualPerceptionStatus =
@@ -326,6 +361,37 @@ export interface PrivacyEvent {
 }
 
 /**
+ * M6 — the enforcement regimes this implementation actually defines.
+ *
+ * `'strict'` is the ONLY mode that exists: the agent loop emits it, and the firewall
+ * requires it. Further modes (a 'standard'/'permissive' relaxation) are deliberately NOT
+ * declared, because a mode name with no enforcement behaviour behind it would be a
+ * fabricated capability (CONTRIBUTING.md §22) AND a shape a caller could claim in order to
+ * ask for weaker treatment. Widen this union only together with the code that implements
+ * the new mode; the runtime companion is `extension/src/policy/modes.ts`.
+ */
+export type PrivacyMode = 'strict';
+
+/**
+ * M6 — Task Privacy Contract: the per-task privacy rules that travel WITH a sanitized
+ * request (blueprint §7). The explicit statement of "which regime is in force, and where
+ * an action may go" for one task:
+ *   - `privacyMode`         — the enforcement regime the local side has committed to;
+ *   - `navigationAllowlist` — the ONLY origins a NAVIGATE action may target; EMPTY means
+ *                             navigation is denied outright (fail closed, never "guess").
+ *
+ * It carries no raw value and no alias→value mapping — it is metadata about LIMITS, not
+ * about content, which is why it is safe to place on an outbound request. Local
+ * enforcement of the same rules is `ActionPolicy` (`extension/src/actions/validate.ts`):
+ * the contract states the limits, the validator refuses anything outside them.
+ */
+export interface TaskPrivacyContract {
+  readonly privacyMode: PrivacyMode;
+  /** Validated origins (scheme + host, no path). Empty ⇒ NAVIGATE is fully denied. */
+  readonly navigationAllowlist: readonly string[];
+}
+
+/**
  * Sanitized request that may cross the remote boundary.
  * See docs/threat-model.md §5 (allowlist) and §6 (denylist).
  */
@@ -337,7 +403,8 @@ export interface RemoteAgentRequest {
   sanitizedVisibleText: string;
   aliases: { alias: string; category: SensitiveCategory }[];
   availableActions: AgentActionKind[];
-  policy: { privacyMode: string; navigationAllowlist: string[] };
+  /** The task's privacy contract (M6). Validated field-by-field by the firewall. */
+  policy: TaskPrivacyContract;
 }
 
 // ---------------------------------------------------------------------------

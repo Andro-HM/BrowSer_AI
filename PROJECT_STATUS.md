@@ -1,10 +1,148 @@
 # PrivAgent — PROJECT_STATUS
 
-_Last updated: 2026-08-30_
-_Author: Real local OCR (Tesseract.js) integrated — visual content pass live_.
+_Last updated: 2026-09-04_
+_Author: M3 closed out with a REAL local vision model (§00) — OmniParser `icon_detect` ONNX
+through onnxruntime-web, verified by real inference, not mocks. Previous entry: all gates
+re-verified from a clean tree (§9k); M6 audit gaps closed with an explicit task privacy
+contract (§9l)._
 _Engineering rules: [CONTRIBUTING.md](CONTRIBUTING.md) (formerly `CLAUDE.md`; section
 numbers unchanged)._
 
+
+---
+
+## 00. Local VISION model — the last open M3 item (COMPLETE, one caveat)
+
+**Status: implemented and verified with real inference on the real graph. All five gates
+green. NOT committed. One unresolved non-technical item: the weights are AGPL-3.0 (§00.7).**
+
+The M3 pipeline previously had DOM geometry (WHERE regions are), Tesseract OCR (WHAT text
+pixels contain), and a pixel-stats heuristic (coarse structural label) — but **no model that
+localizes elements inside a region**. SIH26171 requires a local ViT/equivalent vision model.
+That is now in place, in the existing seam, with no rewrite of anything that worked.
+
+### 00.1 What ships
+
+| | |
+|---|---|
+| Model | **OmniParser v1 `icon_detect`** (YOLOv8n backbone), ONNX export by `onnx-community` |
+| Task | single-class detection — "interactable element". **No class names, so none are invented** |
+| Artifact | `extension/public/models/icon-detect-640.onnx` — **11.68 MB** fp32 |
+| Graph | input `images` `[1,3,640,640]` static → output `output0` `[1,5,8400]` |
+| Runtime | `onnxruntime-web@1.29.0` (exact-pinned, the only new dependency), bundled jsep wasm |
+| EPs | `['webgpu','wasm']` → `['wasm']` — **same file, same graph, measured bit-identical** |
+
+### 00.2 Files added / modified (nothing existing was rewritten)
+
+**Added:** `extension/src/perception/visual/providers/vision-onnx.ts` (provider),
+`providers/yolo-decode.ts` (pure letterbox/NMS/un-letterbox arithmetic),
+`extension/src/perception/register-vision.ts` (the one production install point),
+`extension/public/models/` (weights + ORT wasm + `NOTICE.txt`),
+`tests/unit/vision-decode.test.ts`, `tests/unit/vision-provider.test.ts`,
+`tests/integration/vision-model.test.ts`.
+
+**Modified, minimally:** `providers/registry.ts` (+`analysisEdge` so a provider can declare
+the raster size it needs), `visual/service.ts` (**3 lines** — raster budget becomes
+`max(OCR budget, provider edge)`), `visual/index.ts` (dropped a vision re-export that was
+defeating the lazy chunk split), `diag/ocr-trace.ts` (+4 vision trace stages),
+`sidepanel/main.tsx` (+`installVisionEngine()`), `types/contracts.ts`
+(`VisualObservation.elements`), `package.json` (+`onnxruntime-web`),
+`tests/e2e/scan-findings.spec.ts` (timeout budget for a real model load, §00.6).
+
+### 00.3 Real inference, not model-card claims
+
+`tests/integration/vision-model.test.ts` — **9/9 passing**, loading the real 11.68 MB graph
+through the real ORT wasm runtime in Node:
+
+- the graph is the single-class head the decoder was written for (`[1,5,8400]`);
+- real localization on painted pixels — every box lands on the painted card, none on blank margin;
+- **zero elements on a blank raster from the same loaded session** (the anti-fabrication control);
+- determinism; per-region coordinates from one shared session;
+- DOM sufficient ⇒ the graph is **never loaded**; DOM insufficient ⇒ every region analysed, **one** load;
+- Vision (WHERE) + OCR seam (WHAT) over the same raster;
+- real M2→M3→M4→M5 handoff leaking no canary, no `ui_elements`, no `"elements"`, no model name.
+
+Measured on a chat-UI replica in headed Chromium (details: `docs/m3-visual-perception.md` §11):
+8 regions from 15 candidates, **44 element boxes**, 87–650 ms/region, session create 1374 ms
+(wasm) / 304 ms (WebGPU). Whole-viewport control: **51 boxes on both EPs, identical rects,
+max score delta 0.000** — wasm 563 ms vs WebGPU 108 ms.
+
+**Input-edge finding:** the same 8 regions at edge 192 gave 13 boxes instead of 44, and the
+richest region gave **0**. A too-small raster does not degrade this model, it silences it —
+hence `analysisEdge: 640` on the registration.
+
+### 00.4 Multi-region: preserved, and now proven at the model layer
+
+Unchanged behaviour, extra proof. Each selected region (≤ `MAX_REGIONS` = 8) still yields its
+own observation → policy decision → mask directive; `mergeMaskRegions` still merges only
+genuinely overlapping directives. New assertions: two independent regions stay two regions with
+distinct ids and their own element geometry, and the same pixels at a different region origin
+produce the **same geometry translated**, not re-derived.
+
+### 00.5 Lightweight (requirement J) — measured, with a finding
+
+`npm run build` → **`dist/` = 80.43 MB (84,335,704 B), 26 files — PASS (<100 MB).**
+
+| Asset | Size |
+|---|---|
+| `models/ort-wasm-simd-threaded.jsep.wasm` | 26.51 MB |
+| `assets/ort-wasm-simd-threaded.jsep-*.wasm` | 26.51 MB — **duplicate, never fetched at runtime** |
+| `models/icon-detect-640.onnx` | 11.68 MB |
+| Tesseract core ×2 + `.wasm.js` ×2 + `eng.traineddata.gz` | ~15.3 MB |
+| app chunks (panel 250.14 kB, `ort.bundle.min` 402.91 kB, rest < 20 kB) | ~0.7 MB |
+
+**Honest finding, not fixed here:** the ORT wasm ships twice — our deterministic bundled copy
+under `models/` (what `wasmPaths` actually loads) plus a fingerprinted copy Vite emits from
+ORT's own import graph. Pruning the unused copy would take `dist/` to ~53.9 MB. It is inert and
+the budget passes, so it was left alone rather than surgically deleting a Vite-emitted asset
+during a verification gate; it is a build-tuning task.
+
+**Laziness is proven by the build, not asserted:** removing the vision re-export from the
+`perception/visual` barrel eliminated rollup's `INEFFECTIVE_DYNAMIC_IMPORT` warnings, shrank the
+panel chunk 253.71 → 250.14 kB, and split `vision-onnx` (0.19 → 2.78 kB) and `pixel-stats`
+(0.14 → 1.49 kB) into real on-demand chunks. The 11.68 MB graph and the 26.51 MB wasm load only
+on first session create, which only happens after the DOM-first gate says pixels are needed.
+
+### 00.6 Gates (all run this session, in order)
+
+| Gate | Result |
+|------|--------|
+| `npm run typecheck` | **PASS** (clean) |
+| `npm run lint` | **PASS** (0 problems) |
+| `npm run test` | **PASS — 391/391 (37 files)**, includes the 9 real-model tests |
+| `npm run build` | **PASS**, and both `INEFFECTIVE_DYNAMIC_IMPORT` warnings eliminated |
+| `npm run e2e` | **PASS — 23/23** |
+
+**One real regression, found and fixed honestly.** The first full e2e run failed
+`scan-findings.spec.ts`: the panel still showed "Scanning… / analysing page" at the 10 s expect
+timeout, with telemetry proving M2 had finished (`scan.detect` 4.2 ms, `DETECTED: 4`) and the
+visual stage still running. Run alone the same test takes **5.6 s**; under the parallel suite it
+takes **15.4 s** — i.e. cold first load of the ONNX graph + ORT wasm + Tesseract while other
+workers compete for CPU and disk. Fixed by giving that one assertion a model-load-sized budget
+(precedent: `visual-accuracy.spec.ts` already waits 30 s for OCR). **No assertion was weakened**
+— the aliases, the count, the outbound-block and the no-raw-dump checks are byte-identical.
+
+### 00.7 Unresolved: license
+
+The `icon_detect` **weights are AGPL-3.0**: the `microsoft/OmniParser` model card declares
+`license: mit`, but `icon_detect/LICENSE` in that same repository is the verbatim AGPL-3.0 text,
+so the stricter file-level license is treated as governing. This repo is `private: true` with
+no declared license. Recorded in `extension/public/models/NOTICE.txt`, not glossed over.
+Permissive alternatives exist but are PyTorch-only — Salesforce/GPA-GUI-Detector (38.69 MB,
+`.pt`), laywens/uitag-yolo11s (MIT, 18.31 MB, `.pt`) — so adopting one means owning an ONNX
+export step and re-measuring everything. **Must be settled before public distribution.**
+
+### 00.8 Not verified, stated plainly
+
+- **WebGPU is not covered by `npm test`** — Node has no GPU adapter, so the automated suite runs
+  the wasm EP only. WebGPU was measured by hand in headed Chromium (`gpu=true`, create 304 ms,
+  87–110 ms/region, exact parity with wasm). `executionProviders()` ordering is unit-tested.
+- **WhatsApp Web itself was not driven.** An offline replica fixture was used instead, for
+  account/ToS/privacy reasons. The replica reproduces the structure that matters (avatar column,
+  message list, image attachment, composer) and is where the 8-region / 44-box numbers come from.
+- **No labelled-dataset accuracy figure** (no mAP, no precision/recall). What is claimed is
+  measured behaviour on this project's own surfaces plus the blank-raster control.
+- `npm run format:check` fails repo-wide — a **pre-existing** condition, unrelated to this work.
 
 ---
 
@@ -1163,6 +1301,73 @@ Firefox MV3 structure ✅
 
 ---
 
+## 9k. Gate re-verification from a clean tree (2026-09-02)
+
+_Every gate below was re-run in this workspace at HEAD `f2502a4` with a clean working
+tree — not quoted from an earlier section (CONTRIBUTING.md §20/§22). Three real defects
+were found by doing so, and all three are fixed._
+
+### Defects found and fixed
+
+1. **`npm run lint` was RED (2 errors)** — `scripts/build-firefox.mjs:32` escaped the
+   double quotes inside a regex character class (`/import\s+['\"]([^'\"]+)['"];?/g`),
+   which `no-useless-escape` rejects. Fixed by removing the two unnecessary escapes
+   (`['"]([^'"]+)`) — semantically identical; `npm run build:firefox` still finds exactly
+   one import in the service-worker loader and emits a valid `dist-firefox/`, which is the
+   behavioural proof the regex is unchanged.
+2. **`tests/e2e/agent-task.spec.ts:60` had a floating assertion** — the final
+   `expect(panel.locator('body')).not.toContainText(...)` was missing `await`, so the
+   matcher's promise outlived the test and raced teardown, surfacing as
+   `Protocol error (Runtime.callFunctionOn): … session closed` (1 failed / 22 passed on
+   the first run). Fixed by awaiting it. This *strengthens* the check: an un-awaited
+   matcher may never actually assert. Re-ran that spec `--repeat-each=3` → 3/3 green, then
+   the whole suite. No other un-awaited async matcher exists in `tests/e2e/**` (grepped).
+3. **`npm run build:firefox` turned `npm run lint` RED (1906 errors)** — `dist-firefox/`
+   is gitignored but was missing from `eslint.config.js` `ignores`, so eslint linted the
+   generated Firefox bundle. CI never hit it because CI does not run the Firefox build
+   before lint; a developer following §9j's documented command does. Fixed by ignoring
+   `dist-firefox/**` exactly like `dist/**`. Verified by running lint WITH `dist-firefox/`
+   present → exit 0.
+
+### Verified gate results
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npm run typecheck` | ✅ pass (0 errors) |
+| Lint | `npm run lint` | ✅ pass (0 errors) — after fixes 1 and 3, verified with `dist-firefox/` present |
+| Unit + integration | `npm test` | ✅ **324 / 324** (33 files) |
+| Bench | `npm run bench` | ✅ 3 / 3 golden gates |
+| Build | `npm run build` | ✅ pass |
+| E2E | `npm run e2e` | ✅ **23 / 23** (9 specs) — after fix 2 |
+| Firefox transform | `npm run build:firefox` | ✅ valid `dist-firefox/` |
+| Backend | `pytest -q` (backend/fastapi) | ✅ **10 / 10** — see env note |
+| Lightweight | `du -sh dist` | ✅ **16 MB** (<100 MB); `dist/ocr` is the bulk |
+
+**Environment note (honest):** backend tests initially could not even be COLLECTED here —
+`starlette.testclient` requires `httpx`, which was absent from this machine's Python
+env. Installing `backend/fastapi/requirements.txt` fixed it (10/10). The install upgraded
+global `starlette`/`uvicorn`, which an unrelated globally-installed `platformio 6.1.19`
+pins lower — a pre-existing environment conflict, not a project defect.
+
+### §0 open item now CLOSED
+
+`dist/manifest.json` was read directly and does contain
+`"host_permissions": ["<all_urls>"]` alongside
+`"permissions": ["storage","activeTab","scripting","sidePanel"]`, so the capture
+root-cause fix is present in the BUILT artifact. The `<all_urls>` grant and
+`sidepanel/capture.ts` broker are committed (they landed in `0f14896`).
+Still outstanding and **not** claimed: a manual Chrome click-through of the real capture
+(headless-Chromium e2e exercises the identical production path, incl. live Tesseract wasm
+recognition per §9i, but a human Reload-in-`chrome://extensions` check has not been done).
+
+### Stale counts corrected
+
+Earlier sections are point-in-time snapshots and were left intact for history: §0 records
+`271/271` unit tests and §9j records `22/22` e2e. The current, measured figures are
+**324/324** unit+integration and **23/23** e2e.
+
+---
+
 ## 10. Corrections to earlier milestone claims
 
 Recorded for honesty (CONTRIBUTING.md §22) — these were found while starting M3, not introduced by
@@ -1183,21 +1388,242 @@ it.
 
 ---
 
+## 9l. M6 audit gap closure — explicit task privacy contract (2026-09-02)
+
+_Scope: the five gaps named by the read-only M6 audit, and nothing else. No M7 work, no
+AI/LLM/VLM, no architecture change, no M0–M5 logic touched._
+
+### Gaps closed
+
+1. **Explicit typed `TaskPrivacyContract`.** `extension/src/types/contracts.ts` now
+   declares `TaskPrivacyContract { readonly privacyMode; readonly navigationAllowlist }`
+   and `RemoteAgentRequest.policy` is that type instead of an inline object literal.
+   `backend/fastapi/app/agent.py` mirrors it (`ActionPolicy` → `TaskPrivacyContract`).
+2. **`privacyMode` is strongly typed:** `type PrivacyMode = 'strict'`. Grepping every
+   producer and assertion (extension, tests, backend, docs, bench) found `'strict'` to be
+   the only regime any code path emits or honours, so that is the whole union.
+   `'standard'`/`'permissive'` were deliberately NOT declared: a mode name with no
+   behaviour behind it is a fabricated capability (CONTRIBUTING.md §22) and a shape a
+   caller could claim in order to receive weaker treatment. Runtime companion:
+   `extension/src/policy/modes.ts` (`PRIVACY_MODES`, `DEFAULT_PRIVACY_MODE`,
+   `isPrivacyMode`) — `contracts.ts` stays types-only, mirroring `actions/kinds.ts`.
+3. **Module-level mutable navigation state removed.** `extension/src/agent/session-policy.ts`
+   no longer holds `let navigationAllowlist` with `set/getNavigationAllowlist`; it exports
+   `createSessionNavigationPolicy()`, a per-run handle that freezes a copy on write.
+   `runAgentLoop` publishes through an optional `navigationPolicy` option; `AgentTask.tsx`
+   creates one handle per run and hands the bridge `policy: () => ({ ...DEFAULT_ACTION_POLICY,
+   navigationAllowlist: navigationPolicy.get() })`. Runtime behaviour is unchanged; one
+   run can no longer widen another's allowlist, and the caller cannot mutate the list it
+   is handed.
+4. **`toSanitizedNodes(undefined)` → `[]`** is now asserted (with `[]` → `[]`), so a scan
+   that reports no structure can never leak `undefined` into a request or fabricate a node.
+5. **Affected types/usages/tests updated**, plus the firewall was *strengthened* while the
+   contract was formalized (see below).
+
+### Firewall: strengthened, not weakened
+
+`extension/src/firewall/inspect.ts` validated `policy` loosely (`privacyMode` any string,
+`navigationAllowlist` any array). It now validates the contract field-by-field through
+`isPrivacyMode`, requires every allowlist entry to be a string, and rejects any extra
+contract key — so an undefined regime, a non-string entry, or a smuggled
+`allowRawValues: true` all fail closed as `FIREWALL_MALFORMED`. Backend-side, `privacyMode`
+is a pydantic `Literal`, so an unknown regime is a 422 rather than something served under a
+mode nothing implements.
+
+### Verified gate results
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npm run typecheck` | ✅ pass |
+| Lint | `npm run lint` | ✅ pass |
+| Unit + integration | `npm test` | ✅ **332 / 332** (34 files) — was 324 / 324 (33) |
+| Bench | `npm run bench` | ✅ 3 / 3 golden gates |
+| Build | `npm run build` | ✅ pass |
+| E2E | `npm run e2e` | ✅ **23 / 23** (19.6s) — see flake note |
+| Backend | `pytest -q` (backend/fastapi) | ✅ **11 / 11** — was 10 / 10 |
+
+New tests: `tests/unit/privacy-contract.test.ts` (mode vocabulary; `isPrivacyMode` rejects
+every undefined regime; `DEFAULT_ACTION_POLICY` frozen and NAVIGATE denied), a
+contract-validation case in `tests/unit/firewall.test.ts`, the `toSanitizedNodes` case and
+a `session navigation policy` block in `tests/unit/agent-loop.test.ts` (deny-all default,
+cross-run isolation, copy-on-write/frozen, and a real `runAgentLoop` run proving the
+handle receives the scanned page's **origin only** — never the full URL), and
+`test_plan_rejects_a_privacy_contract_it_cannot_honour` in `backend/fastapi/tests/test_plan.py`.
+
+### Honest note: one e2e flake, in code not touched here
+
+The first full `npm run e2e` after these changes failed 1 / 23 at
+`tests/e2e/navigation.spec.ts:36` (`NO_PROGRESS` after two executed NAVIGATEs) on a loaded
+machine at 40.7s wall time. Cause: the loop's fixed 600 ms post-NAVIGATE settle can elapse
+before the new document is observable, so the loop re-observes the pre-navigation origin
+and re-plans the identical NAVIGATE, and the no-progress guard correctly stops the run.
+Both NAVIGATEs were allowlisted, so the reworked allowlist wiring behaved as intended.
+Evidence: that spec passes 3 / 3 isolated (~1.8s each) and 8 / 8 under
+`--repeat-each=8 --workers=4`; the full suite then passed 23 / 23 in 19.6s. This is a
+latent load-dependent timing flake that predates these changes. The test was NOT weakened.
+The real fix — wait for the observed origin to change instead of a fixed delay — is out of
+this scope ("do not rewrite unrelated navigation logic") and is listed in §11.
+
+---
+
+## 9m. M3 model gate — YOLOS-tiny measured, REJECTED, removed (2026-09-03)
+
+### Scope
+
+The M3 directive required objective proof that a bundled local vision model actually works
+**for this project** before M3 could be called complete: "Do NOT assume 'model loads' =
+works… Test the real model, not a mock… Do not fabricate browser UI labels from its COCO
+classes." A full YOLOS-tiny (`hustvl/yolos-tiny`) ONNX provider was implemented, measured with
+real inference, and then removed. No commit was made.
+
+### MODEL DECISION: **REJECT** — no detector model ships
+
+`YOLOS-tiny` is technically functional and **provably correctly integrated**, and is still
+**not useful for browser/UI visual perception**. Per the directive ("If YOLOS-tiny is
+technically functional but NOT sufficiently useful … DO NOT FORCE IT INTO PRODUCTION"), it was
+removed rather than shipped. **Replacement is not another model**: DOM candidate geometry
+supplies WHERE, the already-bundled Tesseract.js supplies WHERE + EXACT TEXT via its own
+word/line boxes, and `pixel-stats` supplies the coarse structural label. Full methodology,
+per-region numbers, and the alternatives table are in `docs/m3-visual-perception.md` §9.
+
+### What was measured (real inference, no mocks)
+
+| Directive item | Result |
+| --- | --- |
+| 1. Model loads | ✅ session create 409–453 ms (Node, ORT WASM) |
+| 2. Real ONNX inference | ✅ 333–381 ms per region |
+| 3. WebGPU | ✅ `create 1814 ms · cold 1576 ms · warm 123 ms` (headed Chromium, real adapter) |
+| 4. WASM/CPU fallback | ✅ `create 494 ms · cold 373 ms · warm 347 ms`; identical top-5 to WebGPU and to Node |
+| 5. Real bounding boxes | ✅ on photographs; ❌ whole-region/degenerate on UI surfaces |
+| 6. Real confidences | ✅ non-degenerate softmax |
+| 7. Multiple relevant regions | ✅ **8 regions** from 14 candidates (`visual_only_content_present`) |
+| 8. Useful for browser-agent perception | ❌ **decisive failure** |
+| 9. Not one meaningless generic region | ✅ fixed — see root cause below |
+| 10. Tesseract receives the correct regions | ✅ unchanged path, now with a legibility floor |
+| 11. Combined vision+OCR reaches M4 | ✅ unchanged `VisualPerceptionResult` → `PolicySignals` |
+
+**Control experiment (proves our code, not the model, is correct):** the same model file and
+the same project `preprocess`/`decodeDetections` over a real 810×1080 COCO photo returned
+`person 1.00, bus 1.00, person 1.00, person 0.99, bus 0.99` with sensible boxes. On UI
+surfaces the same code returned `cup 0.78` / `stop sign 0.74` for a 48 px avatar,
+`stop sign 0.89` for a laptop-and-person photo, `microwave 0.69` for a terminal screenshot
+containing `API_KEY=…`, and nothing for a sticker. Detections appeared at input edge 320 and
+vanished at 512 — not a resolution problem, a domain problem. Cost avoided: **~54 MB**
+(26.2 MB weights + 27.8 MB ORT WASM) and ~2.8 s per 8-region run.
+
+### Root cause of the earlier "~1 analysed region" report
+
+Not the model. Three region-selection defects, each fixed and now locked by tests in
+`tests/unit/visual-regions.test.ts`: (a) the area floor discarded every 48 px avatar —
+`MIN_CANDIDATE_AREA` is now 40×40; (b) a full-bleed backdrop consumed the budget — regions
+covering > `OVERSIZED_VIEWPORT_SHARE` (0.6) of the viewport now rank **last**; (c) wrapper +
+image duplicate pairs each took a slot — near-duplicates merge at `NEAR_DUPLICATE_IOU` 0.95.
+`MAX_REGIONS` rose 4 → 8. Separately, OCR returned zero words on small crops because they
+were rasterized below Tesseract's cap-height: on the OCR path only, crops are now resampled
+into a 1024/512 px band with upscaling capped at `MAX_UPSCALE` 4.
+
+### Rasterizer changes, and why each was necessary
+
+Only one behavioural change survives, and only on the OCR path: `analysisScale()` gained an
+optional `minEdge`, and `service.ts` passes `OCR_ANALYSIS_EDGE`/`OCR_MIN_ANALYSIS_EDGE`
+**only when a content analyzer is actually registered**. Without a registered engine the
+pipeline rasterizes exactly as before (192 px cap). No new screenshot architecture, no
+continuous rasterization, no rewrite of multi-region capture. Everything YOLOS-specific was
+reverted via `git checkout`.
+
+### Provider failure now degrades honestly (defect found while closing the gate)
+
+`service.ts` promised in its header that it "never throws at its callers", but a provider
+factory rejection propagated straight out of `run()` — which is exactly how a bundled model
+fails in the field. Fixed: the provider load is memoized per run and caught, yielding
+`status: 'unavailable'`, `reason: 'visual_provider_unavailable'` plus the sanitized load error
+in `reasonDetail`; a provider that throws on a single region leaves that region unanalysed and
+**uncached** rather than fabricating a label. `VisualStatus` renders a human explanation for
+the new reason code, never the raw code.
+
+### Files
+
+Deleted: `providers/vision-onnx.ts`, `providers/yolos-decode.ts`, `register-vision.ts`,
+`visual/ocr-targets.ts`, `extension/public/models/` (26.2 MB), `probe-onnx.mjs`, and the
+scratch `.m3-gate/` harness. Dependency `onnxruntime-web@1.29.0` uninstalled.
+Reverted: `sidepanel/main.tsx`, `visual/service.ts` (then re-applied the `minEdge` change only).
+Modified: `types/contracts.ts` (dropped `VisualElementLabel`/`VisualElement`/`elements` — no
+M4/M5 consumer existed), `visual/service.ts`, `diag/ocr-trace.ts`
+(`VISION_PROVIDER_UNAVAILABLE` stage), `sidepanel/capture.ts` (shared `scrollViaBackground`),
+`sidepanel/App.tsx`, `sidepanel/VisualStatus.tsx` (below-fold bands now also reach the Visual
+Check widget), `docs/m3-visual-perception.md` (§9 + stale §5–§8 corrected),
+`docs/threat-model.md` (R11 resolved by removal).
+**Preserved as the directive requires:** `providers/registry.ts` and `capability.ts` — the
+generic provider seam and the WebGPU → WASM → CPU ordering.
+
+### Verified gate results
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npm run typecheck` | ✅ pass |
+| Lint | `npm run lint` | ✅ pass |
+| Unit + integration | `npm test` | ✅ **347 / 347** (34 files) — was 332 / 332 |
+| Build | `npm run build` | ✅ pass |
+| E2E | `npm run e2e` | ✅ **23 / 23** (18.2s) |
+| Bundle size | `find dist -type f` | ✅ **15.29 MB** (19 files) — budget < 100 MB |
+
+`dist/` is dominated by the bundled OCR engine: `tesseract-core*-lstm.wasm(.js)` ≈ 13.0 MB and
+`eng.traineddata.gz` 1.9 MB. Shipping YOLOS would have made it ≈ 69 MB for no measured benefit.
+
+New tests (15): 8 in `tests/unit/visual-regions.test.ts` (dense-UI multi-region selection,
+48 px avatars kept as distinct regions, oversized-backdrop ranking, wrapper/image collapse,
+distinct-overlap preservation, and five `analysisScale` OCR-band cases incl. the `MAX_UPSCALE`
+cap), 5 in `tests/integration/visual-perception.test.ts` (provider load failure reported not
+thrown, attempted once per run, pixel bytes kept out of the diagnostic, per-region analyze
+failure completing the rest, failed region not cached). Existing WebGPU/WASM/CPU ordering
+coverage already lives in `tests/unit/visual-restricted.test.ts` — no new file needed.
+
+### Remaining M3 limitations (honest)
+
+- **No UI-element detector exists in the pipeline.** Nothing says "this is a button / an
+  avatar / a credential field" from pixels alone. Text inside images is read by Tesseract;
+  non-text imagery gets a coarse structural label only.
+- **No accuracy figure for `pixel-stats`.** Unbenchmarked heuristic, confidence capped at 0.75.
+- **Below-fold coverage is bounded**, not full-page: ≤ `MAX_CAPTURE_BANDS` scroll-and-capture
+  bands, and only when `scrollViewport` is injected. Regions outside those bands are not
+  analysed and are never reported as if they were.
+- **`MAX_REGIONS` = 8 is a real cap.** Denser pages have regions dropped; the cap is documented
+  and surfaced in metrics (`regionsSelected`), not hidden.
+- **No feasible small UI-detection ONNX artifact was found** at gate time. Every candidate
+  failed on licence (GPL/AGPL), format (`.pt`/`.pth` only), or size. Re-evaluate when an
+  MIT/Apache web-UI detector ships a small ONNX export.
+- Cross-origin iframe interiors stay opaque; DRM/protected video may capture black.
+
+---
+
 ## 11. Next milestone
 
-**M6 — agent loop, action bridge, firewall seam, backend planner.** COMPLETE and
-verified (see §9f). The two integration points left open by §9c are now closed:
-(1) the loop assembles a `RemoteAgentRequest` from `enforcePrivacy` output and (2)
-every outbound payload passes the implemented fail-closed firewall
-(`extension/src/firewall/inspect.ts`).
+**M0–M7 are COMPLETE and verified** (M6 §9f, M7 §9g, telemetry dashboard §9h, visual
+accuracy §9i, below-fold/navigation/repo organization §9j, gate re-verification §9k,
+M3 model gate §9m — decision: no detector model ships).
+The two integration points left open by §9c are closed: the loop assembles a
+`RemoteAgentRequest` from `enforcePrivacy` output, and every outbound payload passes the
+fail-closed firewall (`extension/src/firewall/inspect.ts`).
 
-The next milestone is **not started** and, per CONTRIBUTING.md §24, will not begin
-until explicitly requested. Natural follow-ups, in rough order:
+Items previously listed here as follow-ups and now DONE: M7 telemetry + leakage sentinel
+(§9g/§9h), planner-driven SCROLL for below-fold controls and allowlisted-navigation e2e
+coverage (§9j).
+
+The next milestone is **not started** and, per CONTRIBUTING.md §24, will not begin until
+explicitly requested. Remaining work, in rough order:
 
 1. **S4 — remote provider adapter:** Ollama (`qwen2.5vl:7b`) behind
-   `AGENT_PROVIDER=remote` (the 501 seam in `backend/fastapi/app/agent.py`),
+   `AGENT_PROVIDER=remote` (the loud 501 seam in `backend/fastapi/app/agent.py`),
    JSON-schema-constrained actions, retries/timeouts; e2e against the live backend.
-2. **M7 — telemetry + leakage sentinel:** persist `PrivacyEvent`s (structured,
-   value-free), benchmark harness over `benchmark/` pages, canary reports.
-3. **Loop hardening:** visual/OCR signals in per-step enforcement, planner-driven
-   SCROLL for below-fold controls, allowlisted navigation coverage in e2e.
+   This is the single largest gap: today's planner is deterministic, not a model.
+2. **Loop hardening:** feed M3 visual/OCR findings into PER-STEP enforcement (they are
+   scan-time only today, so a page whose sensitive data lives only in images is
+   filled blank — §9f); add visual-only pages to the task-success metric.
+3. **Detection depth:** contextual/NLP sensitivity for free-text values with no label
+   and no pattern (the documented boundary in `docs/benchmark.md`).
+4. **Platform/manual verification:** human Chrome click-through of live capture; Firefox
+   run via `web-ext run --source-dir dist-firefox` (Playwright cannot load Firefox
+   extensions); CPU/GPU/RAM instrumentation for rubric #4.
+5. **Navigation settle:** replace the loop's fixed 600 ms post-NAVIGATE delay with a wait
+   for the observed origin to change, removing the load-dependent `NO_PROGRESS` flake
+   documented in §9l.

@@ -93,6 +93,23 @@ def test_plan_rejects_raw_alias_grammar_and_oversized_payloads():
     assert client.post("/v1/plan", json=payload).status_code == 422
 
 
+def test_plan_rejects_a_privacy_contract_it_cannot_honour():
+    """M6: `privacyMode` is a Literal, so an unimplemented regime is refused, not served."""
+    for policy in (
+        {"privacyMode": "permissive", "navigationAllowlist": []},
+        {"privacyMode": "", "navigationAllowlist": []},
+        {"navigationAllowlist": []},
+        {"privacyMode": "strict", "navigationAllowlist": [7]},
+    ):
+        payload = make_request().model_dump()
+        payload["policy"] = policy
+        assert client.post("/v1/plan", json=payload).status_code == 422
+
+    payload = make_request().model_dump()
+    payload["policy"] = {"privacyMode": "strict", "navigationAllowlist": ["https://a.test"]}
+    assert client.post("/v1/plan", json=payload).status_code == 200
+
+
 def test_plan_action_values_are_aliases_only():
     response = client.post("/v1/plan", json=make_request().model_dump())
     body = response.json()

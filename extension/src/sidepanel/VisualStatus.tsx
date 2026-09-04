@@ -9,7 +9,7 @@ import { createVisualPerceptionService } from '../perception/visual';
 import type { VisualPerceptionService } from '../perception/visual';
 import type { VisualPerceptionResult, VisualPerceptionStatus } from '../types/contracts';
 import { COLLECT_VISUAL_CANDIDATES, type VisualCandidatesResponse } from '../types/messages';
-import { captureViaBackground } from './capture';
+import { captureViaBackground, scrollViaBackground } from './capture';
 import { recordVisualStats } from './visual-stats';
 
 const STATUS_LABELS: Record<VisualPerceptionStatus, string> = {
@@ -26,6 +26,8 @@ const REASON_LABELS: Record<string, string> = {
   VISUAL_CAPTURE_UNAVAILABLE:
     'The browser would not let this page be captured (e.g. a PDF, the New Tab page, or protected content). Text scanning still ran on the page.',
   rasterization_unsupported_in_context: 'This context cannot turn a capture into pixels.',
+  visual_provider_unavailable:
+    'The local visual analyser could not start, so no image regions were analysed. Nothing was guessed. Text scanning still ran on the page.',
   browser_security_restriction: 'This is a browser-protected surface and cannot be inspected.',
   invalid_snapshot: 'The page structure could not be read.',
   run_in_progress: 'A visual check is already running.',
@@ -38,10 +40,15 @@ const CONTENT_STATUS_LABELS: Record<string, string> = {
   failed: 'OCR/vision engine errored (fail closed — nothing fabricated)',
 };
 
-// Created on first use so simply opening the panel loads no provider.
+// Created on first use so simply opening the panel loads no provider. The scroller is
+// injected for the same reason as in App: without it this widget would report only the
+// visible viewport, silently under-counting below-the-fold images.
 let service: VisualPerceptionService | null = null;
 function getService(): VisualPerceptionService {
-  service ??= createVisualPerceptionService({ captureViewport: captureViaBackground });
+  service ??= createVisualPerceptionService({
+    captureViewport: captureViaBackground,
+    scrollViewport: scrollViaBackground,
+  });
   return service;
 }
 

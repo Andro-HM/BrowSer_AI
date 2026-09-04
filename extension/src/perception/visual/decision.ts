@@ -12,8 +12,16 @@
 import type { DomVisualCandidate, DomVisualSnapshot } from '../../types/contracts';
 import type { VisualDecision } from './types';
 
-/** Below this area a candidate is decorative (icons, spacers, tracking pixels). */
-export const MIN_CANDIDATE_AREA = 64 * 64;
+/**
+ * Below this area a candidate is decorative (icons, spacers, tracking pixels).
+ *
+ * 40x40 rather than 64x64: a chat/social UI paints identity and media in 40–56px
+ * squares (avatars, stickers, reaction thumbnails). At a 4096px^2 floor every one of
+ * them was discarded before capture, which is why a busy page could qualify only one
+ * or two regions. Both edges must still clear `MIN_CANDIDATE_EDGE`, and the region
+ * budget in ./regions.ts still bounds how many are actually analysed.
+ */
+export const MIN_CANDIDATE_AREA = 40 * 40;
 /** Both edges must clear this, so 1000x2 banners don't qualify on area alone. */
 export const MIN_CANDIDATE_EDGE = 32;
 /** Under this much DOM text a page is not meaningfully readable via the DOM. */

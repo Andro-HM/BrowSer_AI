@@ -31,13 +31,20 @@ The remote agent receives a single **sanitized** request object. The provider (w
 
 ```ts
 // sketch — subject to refinement
+type PrivacyMode = 'strict'; // the only regime implemented; widen only with its behaviour
+
+type TaskPrivacyContract = {
+  privacyMode: PrivacyMode; // enforcement regime the local side committed to
+  navigationAllowlist: readonly string[]; // the ONLY NAVIGATE targets; empty ⇒ denied
+};
+
 type RemoteAgentRequest = {
   taskObjective: string;
   sanitizedPageStructure: SanitizedNode[]; // roles/labels/input types; values aliased or removed
   sanitizedVisibleText: string; // aliased
   aliases: { alias: string; category: string }[]; // TYPE ONLY — never the value, never the mapping
   availableActions: AgentActionKind[]; // CLICK | TYPE | SELECT | SCROLL | NAVIGATE
-  policy: { privacyMode: string; navigationAllowlist: string[] };
+  policy: TaskPrivacyContract; // the task privacy contract (M6)
 };
 ```
 

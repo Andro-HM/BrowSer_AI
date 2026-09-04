@@ -63,12 +63,22 @@ export function createBrowserRasterizer(): RasterizeFn {
       const sh = Math.min(bitmap.height - sy, Math.ceil(region.height * sourceScale));
       if (sw <= 1 || sh <= 1) return null;
 
-      const scale = analysisScale(sw, sh, options.maxEdge);
+      const scale = analysisScale(sw, sh, options.maxEdge, options.minEdge);
       const dw = Math.max(1, Math.round(sw * scale));
       const dh = Math.max(1, Math.round(sh * scale));
 
       const context = createCanvasContext(dw, dh);
       if (context === null) return null;
+
+      // Smoothing matters when `minEdge` upscales a small crop: nearest-neighbour
+      // blocks defeat OCR, bilinear/bicubic keeps stroke edges continuous. Guarded
+      // because a minimal test double for the 2D context need not expose these.
+      if ('imageSmoothingEnabled' in context) {
+        (context as { imageSmoothingEnabled?: boolean }).imageSmoothingEnabled = true;
+      }
+      if ('imageSmoothingQuality' in context) {
+        (context as { imageSmoothingQuality?: string }).imageSmoothingQuality = 'high';
+      }
 
       context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, dw, dh);
       const imageData = context.getImageData(0, 0, dw, dh);

@@ -1,0 +1,41 @@
+BUNDLED MODEL — PROVENANCE AND LICENSE
+======================================
+
+File: icon-detect-640.onnx
+Model: OmniParser `icon_detect` (v1), YOLOv8n backbone, single class
+       ("interactable element"), static 640x640 input, ONNX opset export.
+Source of the ONNX artifact:
+       https://huggingface.co/onnx-community/OmniParser-icon_detect_640x640
+Upstream weights:
+       https://huggingface.co/microsoft/OmniParser  (directory: icon_detect/)
+
+LICENSE: GNU AFFERO GENERAL PUBLIC LICENSE v3.0 (AGPL-3.0).
+
+  The microsoft/OmniParser repository card declares `license: mit`, but the file
+  `icon_detect/LICENSE` in that same repository is the verbatim text of the GNU
+  Affero General Public License version 3. The stricter, file-level license is the
+  one that governs these weights, so they are treated here as AGPL-3.0. The
+  onnx-community re-export is derived from them and inherits that license.
+
+  Full license text: https://www.gnu.org/licenses/agpl-3.0.txt
+
+CONSEQUENCE FOR THIS PROJECT — UNRESOLVED, DELIBERATELY NOT HIDDEN:
+  AGPL-3.0 is a copyleft license. Distributing this extension with these weights
+  requires the distribution to comply with AGPL-3.0. This repository currently
+  declares no license at all (`"private": true`, no LICENSE file), so that choice
+  has not been made yet and is not one this file can make.
+
+  If AGPL-3.0 is unacceptable, the vision provider is swappable without touching
+  the pipeline: it decodes a standard YOLOv8 detection head, so any equivalently
+  exported UI detector works by replacing this file. Permissively licensed
+  candidates that were located but ship PyTorch weights ONLY (an ONNX export step
+  would be required) include:
+    - Salesforce/GPA-GUI-Detector        (MIT, 38.69 MB .pt)
+    - laywens/uitag-yolo11s-ui-detect-v1 (MIT, 18.31 MB .pt, desktop UI domain)
+
+NO NETWORK AT RUNTIME: this file and the ONNX Runtime wasm binaries beside it are
+packaged into the extension and loaded via chrome.runtime.getURL(). Inference is
+local by construction; no pixels and no model requests leave the device.
+
+ONNX Runtime Web binaries in this directory (ort-wasm-simd-threaded.jsep.*) are
+part of onnxruntime-web, (c) Microsoft Corporation, MIT license.

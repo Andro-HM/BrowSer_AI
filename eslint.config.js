@@ -6,6 +6,9 @@ export default tseslint.config(
   {
     ignores: [
       'dist/**',
+      // `npm run build:firefox` output — a generated bundle, same as `dist/` (both are
+      // gitignored). Without this, running the Firefox build turns `npm run lint` red.
+      'dist-firefox/**',
       'node_modules/**',
       'backend/**',
       'coverage/**',

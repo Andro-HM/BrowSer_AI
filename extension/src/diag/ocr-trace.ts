@@ -21,6 +21,15 @@ export type OcrTraceStage =
   | 'CAPTURE_SUCCESS'
   | 'CAPTURE_FAILED'
   | 'PIXEL_DATA_VALID'
+  | 'VISION_PROVIDER_UNAVAILABLE'
+  /** The local ONNX vision model loaded and its graph is ready. */
+  | 'VISION_MODEL_READY'
+  /** The model could not load (missing asset, refused wasm, no EP) — degraded, not fatal. */
+  | 'VISION_MODEL_UNAVAILABLE'
+  /** The model loaded but threw on one region — that region reports no elements. */
+  | 'VISION_INFERENCE_FAILED'
+  /** Count of elements the model localized in one region. Geometry counts only. */
+  | 'VISION_ELEMENTS'
   | 'OCR_STARTED'
   | 'OCR_RESULT'
   | 'OCR_REGION_COUNT'
@@ -33,7 +42,12 @@ export type SafeDetail = Record<string, number | boolean | string | undefined>;
 const PREFIX = '[PrivAgent OCR]';
 
 /** Stages that represent a soft failure/degradation → warn (never error). */
-const WARN_STAGES: ReadonlySet<OcrTraceStage> = new Set<OcrTraceStage>(['CAPTURE_FAILED']);
+const WARN_STAGES: ReadonlySet<OcrTraceStage> = new Set<OcrTraceStage>([
+  'CAPTURE_FAILED',
+  'VISION_PROVIDER_UNAVAILABLE',
+  'VISION_MODEL_UNAVAILABLE',
+  'VISION_INFERENCE_FAILED',
+]);
 
 /**
  * Emit one pipeline stage with safe metadata. `detail` is typed to reject objects,

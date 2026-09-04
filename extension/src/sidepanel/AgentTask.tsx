@@ -10,7 +10,7 @@ import { runAgentLoop, type AgentRunResult, type AgentStepRecord } from '../agen
 import { createActionBridge } from '../actions';
 import { createPrivacyFirewall } from '../firewall';
 import { createDeterministicPlanner } from '../agent/planner';
-import { getNavigationAllowlist } from '../agent/session-policy';
+import { createSessionNavigationPolicy } from '../agent/session-policy';
 import { DEFAULT_ACTION_POLICY } from '../actions/validate';
 import { createLocalVault } from '../vault';
 import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
@@ -50,15 +50,20 @@ export function AgentTask() {
       // ONE vault shared by enforcement (writes aliases) and the bridge (resolves them) —
       // the alias→value mapping lives only here, in memory, for this run.
       const vault = createLocalVault();
+      // ONE navigation-policy handle per run, shared by the loop (publishes the allowlist
+      // it derived this step) and the bridge (validates NAVIGATE against it). Scoped to
+      // this run: no other run or panel document can widen it.
+      const navigationPolicy = createSessionNavigationPolicy();
       const runResult = await runAgentLoop({
         task,
         sessionId: `agent-${Date.now()}`,
         vault,
         gateway: createDeterministicPlanner(),
         navigationAllowlist: allowlist,
+        navigationPolicy,
         bridge: createActionBridge({
           vault,
-          policy: () => ({ ...DEFAULT_ACTION_POLICY, navigationAllowlist: [...getNavigationAllowlist()] }),
+          policy: () => ({ ...DEFAULT_ACTION_POLICY, navigationAllowlist: navigationPolicy.get() }),
           onAliasResolved: (alias) => recordEvent({ type: 'ALIAS_RESOLVED', alias }),
         }),
         firewall: createPrivacyFirewall(),

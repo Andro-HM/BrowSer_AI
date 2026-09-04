@@ -16,37 +16,24 @@ import { enforcePrivacy } from '../sanitizer';
 import { toSensitiveCategory } from '../sanitizer/alias';
 import { createLocalVault } from '../vault';
 import type { PolicySignals, RiskSeverity } from '../types/contracts';
-import { SCAN_PAGE, SCROLL_VIEWPORT, type ScanPageResponse, type ScrollViewportResponse } from '../types/messages';
+import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
 import { buildScanSummary, type ScanFindingView, type ScanSummary } from '../scan';
 import { ocrTrace } from '../diag/ocr-trace';
 import { recordEvent, sessionTelemetry } from './telemetry-session';
 import { TelemetryPanel } from './TelemetryPanel';
 import { recordVisualStats } from './visual-stats';
-import { captureViaBackground } from './capture';
+import { captureViaBackground, scrollViaBackground } from './capture';
 
 type ScanState = 'idle' | 'scanning' | 'done' | 'restricted' | 'error';
-
-/**
- * Scroll the active tab to document y `top` for bounded below-the-fold band capture, then
- * let layout/lazy content settle before the caller captures. Relayed through the
- * background worker; carries only an offset. Injected into the M3 service so that ABSENT
- * this dependency the service inspects only the visible viewport (honest limit).
- */
-async function scrollViewport(top: number): Promise<void> {
-  const response: ScrollViewportResponse = await chrome.runtime.sendMessage({
-    type: SCROLL_VIEWPORT,
-    top,
-  });
-  if (response?.error !== undefined) throw new Error(response.error);
-  // Let the newly revealed band paint (and any lazy images load) before capture.
-  await new Promise((resolve) => setTimeout(resolve, 150));
-}
 
 // Created on first scan so simply opening the panel loads no visual provider. Mirrors
 // the lazy pattern in VisualStatus; capture/analysis must run in this document context.
 let visualService: VisualPerceptionService | null = null;
 function getVisualService(): VisualPerceptionService {
-  visualService ??= createVisualPerceptionService({ captureViewport: captureViaBackground, scrollViewport });
+  visualService ??= createVisualPerceptionService({
+    captureViewport: captureViaBackground,
+    scrollViewport: scrollViaBackground,
+  });
   return visualService;
 }
 

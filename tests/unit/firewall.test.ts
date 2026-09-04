@@ -89,4 +89,35 @@ describe('privacy firewall', () => {
     );
     expect(verdict.allowed).toBe(true);
   });
+
+  // The task privacy contract is validated field-by-field, not merely "an object with a
+  // string in it": an undefined regime, a non-string allowlist entry, or a smuggled extra
+  // contract field all fail closed. A caller cannot ask for weaker treatment.
+  it('fails closed on a task privacy contract it cannot honour', async () => {
+    const firewall = createPrivacyFirewall();
+    const contract = (policy: unknown): RemoteAgentRequest =>
+      ({ ...cleanRequest(), policy } as unknown as RemoteAgentRequest);
+
+    expect((await firewall.inspect(contract({ privacyMode: 'permissive', navigationAllowlist: [] }))).reason)
+      .toBe('FIREWALL_MALFORMED');
+    expect((await firewall.inspect(contract({ privacyMode: '', navigationAllowlist: [] }))).allowed).toBe(false);
+    expect((await firewall.inspect(contract({ navigationAllowlist: [] }))).allowed).toBe(false);
+    expect(
+      (await firewall.inspect(contract({ privacyMode: 'strict', navigationAllowlist: ['https://a.test', 7] })))
+        .allowed,
+    ).toBe(false);
+    expect(
+      (
+        await firewall.inspect(
+          contract({ privacyMode: 'strict', navigationAllowlist: [], allowRawValues: true }),
+        )
+      ).allowed,
+    ).toBe(false);
+
+    // …and the contract the loop actually builds still passes.
+    expect(
+      (await firewall.inspect(contract({ privacyMode: 'strict', navigationAllowlist: ['https://a.test'] })))
+        .allowed,
+    ).toBe(true);
+  });
 });

@@ -57,5 +57,5 @@ test('agent loop fills the form via aliases and submits', async ({ extContext, p
   expect(steps).toContain('TYPE');
   expect(steps).toContain('CLICK');
   expect(steps).not.toContain(SAMPLE_EMAIL);
-  expect(panel.locator('body')).not.toContainText(SAMPLE_EMAIL);
+  await expect(panel.locator('body')).not.toContainText(SAMPLE_EMAIL);
 });
