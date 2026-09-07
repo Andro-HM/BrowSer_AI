@@ -4,6 +4,9 @@
 // log (action kind + target + outcome code). The panel NEVER renders raw page content —
 // step records are alias-level by contract (`AgentStepRecord.action` holds aliases, and
 // alias→value resolution happens inside the bridge at execution time, on-device).
+//
+// The agent's perception is the SAME M3 service the scan path uses (`getVisualService`),
+// not a second detector: one capability probe, one region cache, one privacy path.
 
 import { useState } from 'react';
 import { runAgentLoop, type AgentRunResult, type AgentStepRecord } from '../agent';
@@ -16,11 +19,23 @@ import { DEFAULT_ACTION_POLICY } from '../actions/validate';
 import { createLocalVault } from '../vault';
 import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
 import { recordEvent, sessionTelemetry } from './telemetry-session';
+import { getVisualService } from './visual-service';
+import { recordVisualStats } from './visual-stats';
 
 type RunState = 'idle' | 'running' | 'done';
 
 /** Backend planner endpoint (AGENT_PROVIDER=gemini on the FastAPI service). */
 const REMOTE_PLAN_ENDPOINT = 'http://localhost:8000/v1/plan';
+
+/**
+ * What the M3 status codes mean to a user. `not_required` is the DOM-first gate doing its
+ * job — the common, GOOD case — so it reads as a saving, not as a failure.
+ */
+const PERCEPTION_TEXT: Record<string, string> = {
+  not_required: 'DOM sufficient — visual models skipped',
+  completed: 'DOM insufficient — local visual perception ran',
+  restricted_page: 'Restricted page — no capture attempted',
+};
 
 const STATUS_TEXT: Record<AgentRunResult['status'], string> = {
   completed: '✓ Task completed',
@@ -37,11 +52,14 @@ export function AgentTask() {
   const [useGemini, setUseGemini] = useState(true);
   const [state, setState] = useState<RunState>('idle');
   const [result, setResult] = useState<AgentRunResult | null>(null);
+  // M3 status code for the latest step. A STATUS, never a finding — see loop `onEvent`.
+  const [perception, setPerception] = useState<string | null>(null);
 
   const run = async () => {
     if (task.trim().length === 0) return;
     setState('running');
     setResult(null);
+    setPerception(null);
     try {
       // NAVIGATE allowlist: user-configured via storage (settings surface later);
       // default EMPTY — the loop then falls back to same-origin-only navigation.
@@ -81,10 +99,23 @@ export function AgentTask() {
         }),
         firewall,
         scan: () => chrome.runtime.sendMessage({ type: SCAN_PAGE }) as Promise<ScanPageResponse>,
+        // M3 on the agent path. The service's OWN DOM-first gate decides whether anything
+        // expensive runs, so this is not "always do vision" — it is "ask the same question
+        // the scan path asks". Findings feed M4→M5→M6 as structured signals; pixels and
+        // recognized text never leave this document.
+        observeVisual: async (snapshot) => {
+          const visual = await getVisualService().run(snapshot);
+          recordVisualStats(visual);
+          return visual;
+        },
+        onEvent: (event) => {
+          if (event.type === 'VISUAL') setPerception(event.code);
+        },
       });
       const { stageMs } = runResult;
       for (const [name, ms] of [
         ['agent.scan', stageMs.scanMs],
+        ['agent.visual', stageMs.visualMs],
         ['agent.enforce', stageMs.enforceMs],
         ['agent.plan', stageMs.planMs],
         ['agent.execute', stageMs.executeMs],
@@ -102,7 +133,7 @@ export function AgentTask() {
         reason: 'LOOP_CRASHED',
         steps: [],
         actionsExecuted: 0,
-        stageMs: { scanMs: 0, enforceMs: 0, planMs: 0, executeMs: 0, totalMs: 0 },
+        stageMs: { scanMs: 0, visualMs: 0, enforceMs: 0, planMs: 0, executeMs: 0, totalMs: 0 },
       });
     }
   };
@@ -141,6 +172,12 @@ export function AgentTask() {
         {state === 'running' ? 'Running…' : 'Run agent task'}
       </button>
 
+      {perception !== null && (
+        <p className="mt-2 text-xs text-neutral-500" data-testid="agent-perception">
+          👁 {PERCEPTION_TEXT[perception] ?? `Visual perception: ${perception}`}
+        </p>
+      )}
+
       {state === 'done' && result !== null && (
         <div className="mt-3" data-testid="agent-result">
           <p
@@ -156,6 +193,9 @@ export function AgentTask() {
             {result.actionsExecuted} action{result.actionsExecuted === 1 ? '' : 's'} executed
             {result.reason !== undefined && result.status !== 'completed' ? ` · ${result.reason}` : ''}
             {` · ${(result.stageMs.totalMs / 1000).toFixed(1)}s local`}
+            {result.stageMs.visualMs > 0
+              ? ` (visual ${(result.stageMs.visualMs / 1000).toFixed(1)}s)`
+              : ''}
           </p>
           {result.steps.length > 0 && (
             <ul className="mt-2 space-y-1 text-xs text-neutral-700" data-testid="agent-steps">

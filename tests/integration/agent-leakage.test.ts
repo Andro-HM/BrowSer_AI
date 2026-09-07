@@ -25,6 +25,7 @@ import type { RemoteAgentRequest } from '../../extension/src/types/contracts';
 
 const CANARY_EMAIL = 'CANARY_EMAIL_001@example.test';
 const CANARY_PHONE = '555-123-4567';
+const CANARY_BEARER = 'CANARY_PASSWORD_001';
 
 const MODULE_ROOT = join(process.cwd(), 'extension', 'src');
 
@@ -149,6 +150,45 @@ describe('agent loop network isolation', () => {
     for (const call of vi.mocked(console.log).mock.calls) {
       expect(JSON.stringify(call)).not.toContain(CANARY_EMAIL);
     }
+  });
+
+  it('contains an "Authorization: Bearer <token>" credential UPSTREAM of the egress gate', async () => {
+    // The egress gates cannot see this shape: their pattern needs `:`/`=` immediately
+    // after the keyword, and in "Authorization: Bearer x" the colon belongs to
+    // "Authorization" (asserted from the other side in
+    // backend/fastapi/tests/test_privacy_mirror.py). So the guarantee has to come from M2
+    // label evidence + M4 severity instead, and this test is what makes that a fact:
+    // `bearer` is a critical category, so the page never produces an outbound request at
+    // all. Were the keyword missing from `detectLabeledValues`, the run would sail through
+    // to the gateway with the token in `sanitizedVisibleText` and the firewall would pass
+    // it — which is exactly the leak this asserts against.
+    const requests: RemoteAgentRequest[] = [];
+    const vault = createLocalVault();
+    const planner = createDeterministicPlanner();
+    const result = await runAgentLoop({
+      task: 'open the account page',
+      maxSteps: 1,
+      sessionId: 'bearer-session',
+      vault,
+      gateway: {
+        plan: async (request) => {
+          requests.push(request);
+          return planner.plan(request);
+        },
+      },
+      bridge: createActionBridge({ vault, sendToPage: async () => ({ ok: true, code: 'OK' }) }),
+      firewall: createPrivacyFirewall(),
+      scan: async () => ({
+        pageText: `API console\nAuthorization: Bearer ${CANARY_BEARER}\nCopy the header above.`,
+        snapshot: null,
+        structure: [{ tag: 'button', selector: '#copy', label: 'Copy', disabled: false }],
+      }),
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.reason).toBe('PAGE_BLOCKED');
+    expect(requests).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain(CANARY_BEARER);
   });
 });
 

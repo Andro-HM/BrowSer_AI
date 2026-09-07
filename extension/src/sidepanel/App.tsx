@@ -10,8 +10,6 @@ import { useState } from 'react';
 import { VisualStatus } from './VisualStatus';
 import { AgentTask } from './AgentTask';
 import { detectPII } from '../perception/pii';
-import { createVisualPerceptionService } from '../perception/visual';
-import type { VisualPerceptionService } from '../perception/visual';
 import { enforcePrivacy } from '../sanitizer';
 import { classifyPage } from '../perception/visual/pageClassifier';
 import { toSensitiveCategory } from '../sanitizer/alias';
@@ -23,20 +21,9 @@ import { ocrTrace } from '../diag/ocr-trace';
 import { recordEvent, sessionTelemetry } from './telemetry-session';
 import { TelemetryPanel } from './TelemetryPanel';
 import { recordVisualStats } from './visual-stats';
-import { captureViaBackground, scrollViaBackground } from './capture';
+import { getVisualService } from './visual-service';
 
 type ScanState = 'idle' | 'scanning' | 'done' | 'restricted' | 'error';
-
-// Created on first scan so simply opening the panel loads no visual provider. Mirrors
-// the lazy pattern in VisualStatus; capture/analysis must run in this document context.
-let visualService: VisualPerceptionService | null = null;
-function getVisualService(): VisualPerceptionService {
-  visualService ??= createVisualPerceptionService({
-    captureViewport: captureViaBackground,
-    scrollViewport: scrollViaBackground,
-  });
-  return visualService;
-}
 
 const SEVERITY_DOT: Record<RiskSeverity, string> = {
   critical: '🔴',

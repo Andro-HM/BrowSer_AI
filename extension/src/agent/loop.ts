@@ -3,6 +3,7 @@
 // One step = observe → enforce → sanitize → firewall → plan → execute:
 //
 //   SCAN_PAGE (structured inputs, raw, internal only)
+//     → M3 visual perception, DOM-FIRST (skipped entirely when the DOM suffices)
 //     → detectPII (M2) → enforcePrivacy (M4+M5: aliasing into the LOCAL vault)
 //     → build RemoteAgentRequest (SanitizedNodes: filled flags + gated labels, never values)
 //     → privacy firewall.inspect (fail closed — the ONLY egress gate, §5 Rule 6)
@@ -16,8 +17,10 @@
 
 import type {
   AgentAction,
+  DomVisualSnapshot,
   RemoteAgentRequest,
   SanitizedNode,
+  VisualPerceptionResult,
 } from '../types/contracts';
 import type { ScanPageResponse } from '../types/messages';
 import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
@@ -62,6 +65,12 @@ export interface AgentRunResult {
    */
   stageMs: {
     scanMs: number;
+    /**
+     * Time inside the M3 visual service, summed across steps. Includes the DOM-first
+     * gate, so a run where the DOM always sufficed reports a small non-zero value —
+     * that is the gate's own cost, not inference. 0 ⇒ no visual observer was wired.
+     */
+    visualMs: number;
     enforceMs: number;
     planMs: number;
     executeMs: number;
@@ -93,8 +102,30 @@ export interface AgentLoopOptions {
   navigationPolicy?: SessionNavigationPolicy;
   /** Observe the active tab (wraps the SCAN_PAGE relay). Injectable for tests. */
   scan: () => Promise<ScanPageResponse>;
-  /** Privacy-event sink (telemetry lands in M7; the loop only emits structured events). */
-  onEvent?: (event: { type: 'STEP' | 'STOP'; code: string; index: number }) => void;
+  /**
+   * M3 local visual perception, injected rather than imported so the loop never owns a
+   * detector: the side panel passes its ONE shared `VisualPerceptionService.run`, the
+   * same instance the scan path uses (one capability probe, one region cache, ONE
+   * privacy path). Omitted ⇒ DOM-only operation, which is what the unit/bench harnesses
+   * want and is a supported production state, not a degraded one.
+   *
+   * The DOM-FIRST gate lives INSIDE the service (`decideVisualPerception`), so calling
+   * this on every step does NOT mean running models on every step: when the DOM is
+   * sufficient it returns `not_required` before any capture or provider load. That is
+   * deliberately not re-implemented here — a second copy of the gate would be a second
+   * thing to keep in agreement with the scan path.
+   *
+   * Everything it returns stays local. Only category/geometry/confidence reach the
+   * policy engine; recognized text never leaves this document (see policy
+   * `classifyVisualFinding`, which does not read `text`).
+   */
+  observeVisual?: (snapshot: DomVisualSnapshot) => Promise<VisualPerceptionResult>;
+  /**
+   * Privacy-event sink (telemetry lands in M7; the loop only emits structured events).
+   * `VISUAL` carries the M3 status code for one step — a status, never a finding, never
+   * recognized text, so it is safe for the panel to render and for telemetry to keep.
+   */
+  onEvent?: (event: { type: 'STEP' | 'STOP' | 'VISUAL'; code: string; index: number }) => void;
 }
 
 const DEFAULT_MAX_STEPS = 8;
@@ -134,7 +165,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const steps: AgentStepRecord[] = [];
   let actionsExecuted = 0;
-  const stage = { scanMs: 0, enforceMs: 0, planMs: 0, executeMs: 0 };
+  const stage = { scanMs: 0, visualMs: 0, enforceMs: 0, planMs: 0, executeMs: 0 };
   const startedAt = performance.now();
 
   const stop = (status: AgentRunStatus, reason?: string): AgentRunResult => {
@@ -171,6 +202,40 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
       return stop('error', observed.error ?? 'SCAN_FAILED');
     }
 
+    // 1b — M3 local visual perception, on the SAME DOM-first terms as a manual scan.
+    // The service's own gate decides: DOM sufficient ⇒ `not_required` with no capture and
+    // no model load; DOM insufficient ⇒ UI-element localization, face masking, then OCR,
+    // all in this document. Pixels and recognized text stay here; only the structured
+    // result travels onward, and only as far as the policy engine.
+    //
+    // A THROW is not allowed to become a raw-data fallback (§20): it degrades to a
+    // structured `unavailable`, which the policy engine treats as "no visual
+    // contributions" — the DOM-derived findings still gate egress on their own.
+    let visual: VisualPerceptionResult | undefined;
+    const snapshot = observed.snapshot;
+    if (options.observeVisual !== undefined && snapshot != null) {
+      const visualStartedAt = performance.now();
+      try {
+        visual = await options.observeVisual(snapshot);
+      } catch {
+        visual = {
+          status: 'unavailable',
+          supported: false,
+          reason: 'VISUAL_OBSERVER_FAILED',
+          observations: [],
+          metrics: {
+            candidatesConsidered: 0,
+            regionsSelected: 0,
+            regionsProcessed: 0,
+            regionsFromCache: 0,
+            durationMs: performance.now() - visualStartedAt,
+          },
+        };
+      }
+      stage.visualMs += performance.now() - visualStartedAt;
+      options.onEvent?.({ type: 'VISUAL', code: visual.reason ?? visual.status, index });
+    }
+
     // 2 — enforce locally: alias every recoverable value into the LOCAL vault.
     // Multi-signal detection (blueprint §5): pattern evidence (detectPII) + label
     // evidence (detectLabeledValues) — names/addresses/credential-like values that no
@@ -183,7 +248,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
     const visualContext = classifyPage(observed.structure, observed.pageText);
     const enforceStartedAt = performance.now();
     const enforcement = await enforcePrivacy({
-      signals: { entities, visualContext, restricted: false },
+      signals: { entities, visual, visualContext, restricted: false },
       pageText: observed.pageText,
       sessionId: options.sessionId,
       vault: options.vault,

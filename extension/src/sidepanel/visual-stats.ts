@@ -9,6 +9,7 @@
 import type {
   SensitiveCategory,
   VisualContentStatus,
+  VisualPerceptionMetrics,
   VisualPerceptionResult,
 } from '../types/contracts';
 
@@ -18,6 +19,15 @@ export interface VisualStatsSnapshot {
   regionsProcessed: number;
   /** M7.5 — faces found + blacked in the raster before OCR (counts only). */
   faceStats?: { facesDetected: number; facesBlurred: number };
+  /**
+   * M10 — the run's measured performance metrics, forwarded verbatim.
+   *
+   * Timings, counters, an EP name and a heap size: numbers about the RUN, not about the
+   * page, so this stays value-free in the same way the category counts do. Exposing them
+   * here is what lets an e2e benchmark read real per-stage latency out of a live browser
+   * instead of a bench harness inventing it. Fields the run did not measure are absent.
+   */
+  metrics?: VisualPerceptionMetrics;
   capturedAt: number;
 }
 
@@ -37,6 +47,7 @@ export function recordVisualStats(result: VisualPerceptionResult): void {
     categories,
     regionsProcessed: result.metrics.regionsProcessed,
     faceStats: result.faceStats,
+    metrics: result.metrics,
     capturedAt: Date.now(),
   };
 }

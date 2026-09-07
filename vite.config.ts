@@ -10,10 +10,41 @@ import manifest from './extension/manifest.ts';
 // omitted for the scaffold to avoid the Vite 8 rolldown/oxc-babel/react-compiler peer chain.
 
 /**
- * M7.5 — copies the ONNX Runtime WASM files (WASM-only backend, no WebGPU) and the
- * BlazeFace model (when present — `scripts/fetch-blazeface.sh` fetches it; absence
- * degrades gracefully to zero faces) into dist/ as static assets.
+ * Copies the ONNX Runtime WASM runtime and the BlazeFace model (when present —
+ * `scripts/fetch-blazeface.sh` fetches it; absence degrades gracefully to zero faces)
+ * into dist/ as static assets. Both ONNX consumers — the OmniParser vision provider and
+ * the face-blur engine — point `env.wasm.wasmPaths` at this ONE directory.
  */
+
+/**
+ * The ORT runtime variant this build can actually load — NOT a guess.
+ *
+ * `onnxruntime-web@1.29.0`'s package exports resolve a browser `import 'onnxruntime-web'`
+ * to `dist/ort.bundle.min.mjs`, and that file hard-codes exactly two ORT asset names:
+ * `ort-wasm-simd-threaded.jsep.{wasm,mjs}`. There is no runtime variant selection in this
+ * entry point, so the `asyncify` (24.6 MB), `jspi` (15.3 MB) and non-JSEP base (13.3 MB)
+ * binaries are unreachable from it — they belong to the `ort.jspi.*` / `ort.all.*` entry
+ * points, which nothing here imports (verified: the only `onnxruntime-web` imports are
+ * `providers/vision-onnx.ts` and `faceBlur.ts`, both bare specifiers).
+ *
+ * Independent confirmation: Rolldown follows the same file's
+ * `new URL('ort-wasm-simd-threaded.jsep.wasm', import.meta.url)` reference and emits ONLY
+ * that variant into `dist/assets/` — never asyncify, jspi or base.
+ *
+ * ONE binary covers BOTH execution paths (CONTRIBUTING.md §10): JSEP *is* the WebGPU
+ * execution provider, and the same artifact runs the wasm/CPU fallback. Pruning the other
+ * three variants therefore removes ~53 MB without touching either path.
+ *
+ * An earlier reduction attempt DID break at runtime with a "dynamically imported module"
+ * error (PROJECT_STATUS §9l defect #1) because it shipped the *base* pair and dropped
+ * jsep — the exact opposite subset. Keeping the `.mjs` glue matters: this "bundle" build
+ * still resolves it as a separate module next to the `.wasm`.
+ */
+const ORT_RUNTIME_FILES = [
+  'ort-wasm-simd-threaded.jsep.wasm',
+  'ort-wasm-simd-threaded.jsep.mjs',
+] as const;
+
 function copyOnnxAssets() {
   return {
     name: 'copy-onnx-assets',
@@ -21,13 +52,18 @@ function copyOnnxAssets() {
       const ortSource = 'node_modules/onnxruntime-web/dist';
       const ortOut = 'dist/ort';
       mkdirSync(ortOut, { recursive: true });
-      // Ship EVERY ORT WASM runtime file (all variants + glues): ORT selects the glue
-      // at runtime (e.g. ort-wasm-simd-threaded.jsep.mjs), so a partial copy fails
-      // with a "dynamically imported module" backend error on some environments.
-      const ortFiles = readdirSync(ortSource).filter((file: string) =>
-        /^ort-wasm[\w.-]*\.(wasm|mjs)$/.test(file),
-      );
-      for (const file of ortFiles) {
+      // Fail LOUDLY rather than shipping a runtime that 404s on first session create: an
+      // ORT upgrade that renames the variant must break the build, not the extension.
+      const available = new Set(readdirSync(ortSource));
+      const missing = ORT_RUNTIME_FILES.filter((file) => !available.has(file));
+      if (missing.length > 0) {
+        throw new Error(
+          `[privagent] onnxruntime-web no longer ships ${missing.join(', ')}. ` +
+            'Re-derive the required variant from the asset names in dist/ort.bundle.min.mjs ' +
+            'before changing this list.',
+        );
+      }
+      for (const file of ORT_RUNTIME_FILES) {
         copyFileSync(`${ortSource}/${file}`, `${ortOut}/${file}`);
       }
       const model = 'extension/src/perception/visual/models/blazeface.onnx';

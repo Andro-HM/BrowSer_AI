@@ -3,7 +3,14 @@
 Covers the five required scenarios plus the SCROLL direction mapping and the
 missing-key 500. The provider's `response.parsed` is a Pydantic `PlanResult` —
 the mock returns real model instances so the contract is exercised, not faked.
+
+The last two tests are the master §19 obligation for THIS surface: "the canary must
+never appear in the Gemini prompt". Every other test here asserts a status code, which
+proves the boundary refused; only inspecting the string actually handed to
+`generate_content` proves what the remote model was shown.
 """
+
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +21,9 @@ from app.main import app
 from app.gemini_provider import PlanResult, PlannedAction
 
 client = TestClient(app)
+
+CANARY_EMAIL = "CANARY_EMAIL_001@example.test"
+CANARY_PASSWORD = "CANARY_PASSWORD_001"
 
 
 def _request(**overrides) -> dict:
@@ -149,3 +159,54 @@ def test_deterministic_default_ignores_missing_key():
     assert response.json()["actions"] == [
         {"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}
     ]
+
+
+def test_prompt_is_exactly_the_sanitized_projection(gemini_env):
+    """§19 — inspect the prompt itself, not just the response status.
+
+    The prompt is built by hand in `GeminiProvider.plan`, so a field added to
+    `PlanRequest` later does NOT silently join it — this pins the projection. Two things
+    matter: the key set (no `policy`, no `pageOrigin`, and above all nothing value-bearing)
+    and the fact that aliases cross as TYPE bindings rather than resolved values.
+    """
+    mock = _mock_gemini(PlanResult(action=None, done=True, reason="task complete"))
+    with patch("google.genai.Client", return_value=mock):
+        response = client.post("/v1/plan", json=_request())
+    assert response.status_code == 200
+
+    prompt = json.loads(mock.models.generate_content.call_args.kwargs["contents"])
+    assert set(prompt) == {
+        "taskObjective",
+        "sanitizedVisibleText",
+        "sanitizedPageStructure",
+        "aliases",
+        "availableActions",
+    }
+    assert prompt["aliases"] == [{"alias": "USER_EMAIL_1", "category": "EMAIL"}]
+    # `SanitizedNode` has no value field at all (and forbids extras), so this asserts the
+    # projection cannot regain one: a field named like a value would fail here first.
+    for node in prompt["sanitizedPageStructure"]:
+        assert not {"value", "rawValue", "text", "innerText"} & set(node)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"sanitizedVisibleText": f"Signed in as {CANARY_EMAIL}"},
+        {"taskObjective": f"email the receipt to {CANARY_EMAIL}"},
+        {"sanitizedVisibleText": f"Password: {CANARY_PASSWORD}"},
+    ],
+    ids=["visible-text-email", "objective-email", "visible-text-password"],
+)
+def test_canary_never_reaches_the_gemini_prompt(gemini_env, payload):
+    """The remote model is never shown the canary — the call is not made at all.
+
+    A 422 alone would leave open whether the refusal happened before or after the
+    outbound call, which for a third-party API is the whole question.
+    """
+    mock = _mock_gemini(PlanResult(action=None, done=True, reason="unused"))
+    with patch("google.genai.Client", return_value=mock):
+        response = client.post("/v1/plan", json=_request(**payload))
+    assert response.status_code == 422
+    mock.models.generate_content.assert_not_called()
+    assert "CANARY_" not in response.text

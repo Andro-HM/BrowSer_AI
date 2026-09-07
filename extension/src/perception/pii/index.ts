@@ -138,8 +138,14 @@ export function detectLabeledValues(text: string): SensitiveEntity[] {
   // Credential-like values whose keyword is followed by a colon OR whitespace — the
   // pattern-based CREDENTIAL_REGEX above requires [:=], missing shapes like
   // "api_key BENCH_KEY_001" or "Access code: BENCH_SECRET_001".
+  //
+  // `bearer` is here and NOT only in CREDENTIAL_REGEX for a specific reason: the canonical
+  // form is "Authorization: Bearer <token>", where the separator after the keyword is a
+  // SPACE, so the [:=] pattern above cannot see it (verified — the colon belongs to
+  // "Authorization", not to "Bearer"). A bearer token is a live credential, so it must be
+  // aliased before it can reach a request rather than relying on the egress gate.
   const CREDENTIAL_LABELED =
-    /\b(?:api[_-]?key|access[_-]?token|token|secret|password|passwd|key|code|otp)\s*[:=\s]\s*["']?([A-Za-z0-9\-_.~+/]{6,})["']?/gi;
+    /\b(?:api[_-]?key|access[_-]?token|token|secret|password|passwd|bearer|key|code|otp)\s*[:=\s]\s*["']?([A-Za-z0-9\-_.~+/]{6,})["']?/gi;
   for (const match of text.matchAll(CREDENTIAL_LABELED)) {
     const value = match[1];
     if (!value || value.length < 6) continue;

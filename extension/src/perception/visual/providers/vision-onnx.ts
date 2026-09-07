@@ -98,11 +98,31 @@ function extensionUrl(path: string): string | null {
   }
 }
 
-/** Execution providers to try, in order, for a given capability decision. */
-export function executionProviders(backend: VisualBackend): string[] {
-  // The SAME model artifact serves both paths; only the EP changes. `cpu` is ORT's
-  // wasm build too, so it maps to 'wasm' rather than to a second download.
+/**
+ * Backends to attempt, in order, for a given capability decision.
+ *
+ * A WebGPU-capable context still keeps wasm as the fallback — the capability probe can
+ * only report that the adapter EXISTS, not that ORT will accept it for this graph.
+ * `cpu` is ORT's wasm build too, so it maps to a wasm attempt rather than a second
+ * download; the SAME model artifact serves every attempt.
+ */
+export function backendAttempts(backend: VisualBackend): VisualBackend[] {
   return backend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+}
+
+/**
+ * Execution providers for ONE attempt — deliberately a single entry.
+ *
+ * Handing ORT `['webgpu', 'wasm']` lets it fall back INTERNALLY and silently: the created
+ * session gives no indication which EP it settled on, so a run that quietly executed on
+ * wasm was indistinguishable from a real WebGPU run and `activeBackend` was reporting the
+ * REQUEST, not the fact. Attempting one EP at a time makes the attempt that succeeds the
+ * EP actually in use — which is what the observation reports and what M10's
+ * WebGPU-vs-wasm latency split measures. The fallback is not lost, it just moved up one
+ * level (`backendAttempts` above), where it is observable.
+ */
+export function executionProviders(backend: VisualBackend): string[] {
+  return backend === 'webgpu' ? ['webgpu'] : ['wasm'];
 }
 
 /**
@@ -120,7 +140,10 @@ export function createVisionOnnxProvider(options: VisionOnnxOptions = {}): Visua
   let session: VisionSession | null = null;
   let ort: VisionRuntime | null = null;
   let pending: Promise<VisionSession | null> | null = null;
-  /** EP the session was actually created with — reported, never assumed. */
+  /**
+   * EP the session was actually created with — the attempt that succeeded, never the one
+   * that was requested. See `executionProviders` for why those can differ.
+   */
   let activeBackend: VisualBackend | null = null;
 
   const loadSession = async (backend: VisualBackend): Promise<VisionSession | null> => {
@@ -148,19 +171,45 @@ export function createVisionOnnxProvider(options: VisionOnnxOptions = {}): Visua
         runtime.env.wasm.proxy = false;
         runtime.env.logLevel = 'error';
 
-        const providers = executionProviders(backend);
-        const created = await runtime.InferenceSession.create(modelUrl, {
-          executionProviders: providers,
-          graphOptimizationLevel: 'all',
-        });
+        // One EP per attempt, in preference order, so the attempt that succeeds IS the
+        // EP in use. The fallback re-reads the bundled asset, which is a local
+        // extension-URL read and only happens when WebGPU was refused.
+        let created: VisionSession | null = null;
+        let used: VisualBackend | null = null;
+        let lastError: unknown = null;
+        for (const attempt of backendAttempts(backend)) {
+          try {
+            created = await runtime.InferenceSession.create(modelUrl, {
+              executionProviders: executionProviders(attempt),
+              graphOptimizationLevel: 'all',
+            });
+            used = attempt;
+            break;
+          } catch (err) {
+            lastError = err;
+            // Not a failure yet — the next attempt may well succeed. Recorded because a
+            // WebGPU refusal is invisible otherwise, and "why is this run on wasm?" is
+            // the first question a perf number raises.
+            ocrTrace('VISION_BACKEND_REJECTED', {
+              model: VISION_MODEL_NAME,
+              backend: attempt,
+              detail: err instanceof Error ? err.name : 'unknown',
+            });
+          }
+        }
+        if (created === null || used === null) {
+          throw lastError instanceof Error ? lastError : new Error('no execution provider');
+        }
 
         ort = runtime;
         session = created;
-        activeBackend = backend;
+        activeBackend = used;
         state = 'ready';
         ocrTrace('VISION_MODEL_READY', {
           model: VISION_MODEL_NAME,
-          providers: providers.join(','),
+          // The EP the session was created with, not the one that was asked for.
+          backend: used,
+          requested: backend,
           inputs: created.inputNames.length,
           outputs: created.outputNames.length,
         });

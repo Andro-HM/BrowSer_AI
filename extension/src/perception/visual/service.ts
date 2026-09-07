@@ -18,6 +18,11 @@
 // FAILURE POSTURE: every unexpected condition degrades to a structured
 // `unavailable`/`not_required` result. The service never throws at its callers and
 // never guesses an observation it did not measure.
+//
+// INSTRUMENTATION (M10): each heavy stage is wrapped by a stage meter so the run reports
+// a real capture/rasterize/vision/face/OCR breakdown plus the EP the detector actually
+// ran on and the peak JS heap observed while both ONNX graphs were resident. Timings are
+// measured, never derived, and a stage that did not run reports NOTHING rather than 0.
 
 import type {
   DomVisualSnapshot,
@@ -93,11 +98,83 @@ function metrics(partial: Partial<VisualPerceptionMetrics>): VisualPerceptionMet
     regionsProcessed: partial.regionsProcessed ?? 0,
     regionsFromCache: partial.regionsFromCache ?? 0,
     durationMs: partial.durationMs ?? 0,
+    // Optional fields are FORWARDED, never defaulted: an absent timing means the stage
+    // did not run, which a `0` would silently turn into "ran instantly" (M10 §12).
+    ...(partial.backend !== undefined ? { backend: partial.backend } : {}),
+    ...(partial.captureMs !== undefined ? { captureMs: partial.captureMs } : {}),
+    ...(partial.rasterizeMs !== undefined ? { rasterizeMs: partial.rasterizeMs } : {}),
+    ...(partial.visionMs !== undefined ? { visionMs: partial.visionMs } : {}),
+    ...(partial.faceMs !== undefined ? { faceMs: partial.faceMs } : {}),
+    ...(partial.ocrMs !== undefined ? { ocrMs: partial.ocrMs } : {}),
+    ...(partial.peakJsHeapBytes !== undefined
+      ? { peakJsHeapBytes: partial.peakJsHeapBytes }
+      : {}),
   };
 }
 
 function defaultNow(): number {
   return typeof performance === 'object' ? performance.now() : 0;
+}
+
+/** The five instrumented stages of one visual run. */
+type VisualStage = 'capture' | 'rasterize' | 'vision' | 'face' | 'ocr';
+
+/**
+ * Accumulating stage timer + heap-peak sampler.
+ *
+ * Deliberately additive across regions and bands: the reported number is the total time
+ * the run spent in that stage, which is what an end-to-end latency budget is made of.
+ * Rounded once at read time so repeated accumulation does not drift.
+ */
+function createStageMeter(now: () => number) {
+  const totals: Record<VisualStage, number> = {
+    capture: 0,
+    rasterize: 0,
+    vision: 0,
+    face: 0,
+    ocr: 0,
+  };
+  const ran = new Set<VisualStage>();
+  let peakHeap = 0;
+
+  /**
+   * `performance.memory` is a non-standard Chromium extension to `performance` and is
+   * absent in Firefox and in the jsdom test environment — hence the guarded read and the
+   * "absent, not zero" contract on `peakJsHeapBytes`.
+   */
+  const sampleHeap = (): void => {
+    const memory = (performance as { memory?: { usedJSHeapSize?: number } } | undefined)?.memory;
+    const used = memory?.usedJSHeapSize;
+    if (typeof used === 'number' && Number.isFinite(used) && used > peakHeap) peakHeap = used;
+  };
+
+  return {
+    /** Time one stage invocation, recording it even when the call throws. */
+    async time<T>(stage: VisualStage, fn: () => Promise<T>): Promise<T> {
+      const from = now();
+      ran.add(stage);
+      try {
+        return await fn();
+      } finally {
+        totals[stage] += now() - from;
+        // Sampled AFTER the stage, when a freshly-loaded ONNX arena is resident.
+        sampleHeap();
+      }
+    },
+    sampleHeap,
+    /** Only stages that actually ran appear; the rest stay absent. */
+    read(): Partial<VisualPerceptionMetrics> {
+      const round = (n: number): number => Math.round(n * 100) / 100;
+      return {
+        ...(ran.has('capture') ? { captureMs: round(totals.capture) } : {}),
+        ...(ran.has('rasterize') ? { rasterizeMs: round(totals.rasterize) } : {}),
+        ...(ran.has('vision') ? { visionMs: round(totals.vision) } : {}),
+        ...(ran.has('face') ? { faceMs: round(totals.face) } : {}),
+        ...(ran.has('ocr') ? { ocrMs: round(totals.ocr) } : {}),
+        ...(peakHeap > 0 ? { peakJsHeapBytes: peakHeap } : {}),
+      };
+    },
+  };
 }
 
 function clamp01(n: number): number {
@@ -215,8 +292,13 @@ export function createVisualPerceptionService(
     }
 
     inFlight = true;
+    const meter = createStageMeter(now);
+    // Baseline before any model is loaded, so the peak reflects this run's allocations.
+    meter.sampleHeap();
     let processed = 0;
     let fromCache = 0;
+    /** EP the vision model actually ran on, taken from the observations it produced. */
+    let activeBackend: VisualPerceptionMetrics['backend'];
     const observations: VisualObservation[] = [];
     const contentFindings: VisualContentFinding[] = [];
     // Honest content-analysis status, escalated as regions are seen: starts unknown
@@ -276,17 +358,19 @@ export function createVisualPerceptionService(
         entries: { crop: VisualRegion; region: VisualRegion }[],
       ): Promise<void> => {
         for (const { crop, region } of entries) {
-          const raster = await rasterize(captureDataUrl, crop, {
-            viewportWidth,
-            // OCR needs pixel density; a vision model needs its trained input edge.
-            // Both are honoured by taking the larger requirement — the default
-            // (no engine, no model) pipeline keeps the original structural budget.
-            maxEdge: maxAnalysisEdge,
-            // A 48px avatar left at its natural size carries glyphs far below the
-            // cap-height Tesseract needs, which is why small regions used to yield zero
-            // words. On the OCR path they are UPSCALED to a legible floor.
-            ...(minAnalysisEdge > 0 ? { minEdge: minAnalysisEdge } : {}),
-          });
+          const raster = await meter.time('rasterize', () =>
+            rasterize(captureDataUrl, crop, {
+              viewportWidth,
+              // OCR needs pixel density; a vision model needs its trained input edge.
+              // Both are honoured by taking the larger requirement — the default
+              // (no engine, no model) pipeline keeps the original structural budget.
+              maxEdge: maxAnalysisEdge,
+              // A 48px avatar left at its natural size carries glyphs far below the
+              // cap-height Tesseract needs, which is why small regions used to yield zero
+              // words. On the OCR path they are UPSCALED to a legible floor.
+              ...(minAnalysisEdge > 0 ? { minEdge: minAnalysisEdge } : {}),
+            }),
+          );
           if (raster === null) continue;
 
           // Pixels were successfully decoded for this region. Dimensions only — never bytes.
@@ -313,17 +397,22 @@ export function createVisualPerceptionService(
           if (vision === null) return;
           let regionObservations: VisualObservation[];
           try {
-            regionObservations = await vision.analyze(raster, region, backend);
+            regionObservations = await meter.time('vision', () =>
+              vision.analyze(raster, region, backend),
+            );
           } catch {
             // Provider loaded but failed on THIS region. Leave the region unanalysed
             // and uncached rather than inventing a label; metrics show it as selected
             // but not processed.
             continue;
           }
+          // The EP is read back from the observation the model produced, so the metric
+          // records what ran rather than what `preferredBackend` asked for.
+          activeBackend ??= regionObservations.find((o) => o.backend !== undefined)?.backend;
 
           // 7a. M7.5 — face detection + blurring on the raster BEFORE OCR sees it
           //     (ONNX WASM, on-device). Never throws; zeros when the model is absent.
-          const faceStats = await getFaceBlurEngine().blur(raster);
+          const faceStats = await meter.time('face', () => getFaceBlurEngine().blur(raster));
           runFaces.detected += faceStats.facesDetected;
           runFaces.blurred += faceStats.facesBlurred;
 
@@ -335,7 +424,7 @@ export function createVisualPerceptionService(
           try {
             const analyzer = await resolveVisualContentAnalyzer();
             ocrTrace('OCR_STARTED', { regionId: region.id, analyzer: analyzer.name });
-            const analysis = await analyzer.analyze(raster, region, backend);
+            const analysis = await meter.time('ocr', () => analyzer.analyze(raster, region, backend));
             escalate(analysis.status);
             // Result carries a status and a finding count only — never recognized text.
             ocrTrace('OCR_RESULT', {
@@ -373,7 +462,7 @@ export function createVisualPerceptionService(
         let captureDataUrl: string;
         ocrTrace('CAPTURE_REQUESTED', { band: 'viewport', regions: regions.length });
         try {
-          captureDataUrl = await capture();
+          captureDataUrl = await meter.time('capture', () => capture());
         } catch (err) {
           // Capture was refused. This is NOT a crash and NOT necessarily a bug: the
           // browser forbids capturing some surfaces (PDF viewer, other-origin embedded
@@ -397,6 +486,9 @@ export function createVisualPerceptionService(
               candidatesConsidered: candidateCount,
               regionsSelected: totalRegions,
               durationMs: elapsed(),
+              // A refused capture still has a measured cost — reporting it is how a
+              // slow-failing surface is distinguishable from an instant refusal.
+              ...meter.read(),
             }),
           };
         }
@@ -414,7 +506,7 @@ export function createVisualPerceptionService(
         try {
           await scrollViewport!(band.scrollY);
           scrolled = true;
-          const bandCapture = await capture();
+          const bandCapture = await meter.time('capture', () => capture());
           ocrTrace('CAPTURE_SUCCESS', { band: 'below_fold' });
           await analyseCapture(
             bandCapture,
@@ -450,6 +542,7 @@ export function createVisualPerceptionService(
             regionsSelected: totalRegions,
             regionsFromCache: fromCache,
             durationMs: elapsed(),
+            ...meter.read(),
           }),
         };
       }
@@ -468,6 +561,8 @@ export function createVisualPerceptionService(
           regionsProcessed: processed,
           regionsFromCache: fromCache,
           durationMs: elapsed(),
+          ...(activeBackend !== undefined ? { backend: activeBackend } : {}),
+          ...meter.read(),
         }),
       };
     } finally {

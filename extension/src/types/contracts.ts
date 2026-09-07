@@ -137,13 +137,48 @@ export type VisualPerceptionStatus =
   | 'unavailable'
   | 'restricted_page';
 
-/** Real measured counters for one run. Never estimated. */
+/**
+ * Real measured counters for one run. Never estimated.
+ *
+ * The per-stage timings and `peakJsHeapBytes` are all OPTIONAL and ABSENT rather than
+ * zero when the stage did not run or the host cannot measure it. A `0` here would be a
+ * claim ("the stage took no time"); absence is the honest statement ("not measured").
+ * That distinction is what lets M10 report a latency breakdown without inventing numbers
+ * for a DOM-sufficient run that never captured anything.
+ */
 export interface VisualPerceptionMetrics {
   candidatesConsidered: number;
   regionsSelected: number;
   regionsProcessed: number;
   regionsFromCache: number;
   durationMs: number;
+  /**
+   * Execution provider the vision model actually ran on this run — the EP the ONNX
+   * session was created with, not the one the capability probe preferred. Absent when no
+   * model ran. Reporting the request instead would make a WebGPU-vs-wasm latency
+   * comparison meaningless.
+   */
+  backend?: 'webgpu' | 'wasm' | 'cpu';
+  /** Total time in `captureVisibleTab`, summed over the viewport and every band. */
+  captureMs?: number;
+  /** Total time decoding captures and cropping/scaling rasters. */
+  rasterizeMs?: number;
+  /** Total time inside the UI-element detector (ONNX). */
+  visionMs?: number;
+  /** Total time inside the face detector + in-place blur (ONNX). */
+  faceMs?: number;
+  /** Total time inside the OCR content analyzer. */
+  ocrMs?: number;
+  /**
+   * Highest JS heap size observed at a stage boundary during the run, in bytes.
+   *
+   * Sampled from `performance.memory.usedJSHeapSize`, which is Chromium-only and
+   * coarse-grained — absent everywhere else rather than guessed. Both ONNX graphs
+   * (UI detector + face detector) allocate their arenas in this heap, so the peak
+   * observed while both are loaded is a real combined-footprint measurement rather
+   * than an inference from a worker cap.
+   */
+  peakJsHeapBytes?: number;
 }
 
 export interface VisualPerceptionResult {

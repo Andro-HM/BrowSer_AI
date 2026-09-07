@@ -16,7 +16,7 @@ import re
 from urllib.parse import urlparse
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 ALIAS_PATTERN = re.compile(r"^USER_[A-Z]+_\d+$")
 
@@ -36,7 +36,20 @@ SUBMIT_LABELS = re.compile(r"^(submit|send|continue|next|sign in|log in|login|re
 SUBMIT_TASK_VERBS = re.compile(r"\b(submit|send|continue|next|sign in|log in|login|register|book|pay|complete|finish)\b", re.I)
 
 
-class SanitizedNode(BaseModel):
+class StrictModel(BaseModel):
+    """Base for every inbound model: an unexpected field is REFUSED, not ignored.
+
+    Pydantic's default (`extra="ignore"`) would silently drop a smuggled `screenshot`
+    field and answer 200, so the request that reached the server and the request the
+    server admits to having received would differ. The extension firewall already
+    rejects unknown keys (`FIREWALL_UNEXPECTED_FIELD`); the remote mirror fails closed
+    the same way, and the sender learns its payload was wrong.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SanitizedNode(StrictModel):
     tag: Literal["input", "textarea", "select", "button"]
     selector: str = Field(min_length=1, max_length=512)
     inputType: str | None = None
@@ -47,12 +60,12 @@ class SanitizedNode(BaseModel):
     belowFold: bool | None = None
 
 
-class AliasBinding(BaseModel):
+class AliasBinding(StrictModel):
     alias: str = Field(pattern=r"^USER_[A-Z]+_\d+$")
     category: str
 
 
-class TaskPrivacyContract(BaseModel):
+class TaskPrivacyContract(StrictModel):
     """Mirror of the extension's `TaskPrivacyContract` (M6).
 
     `privacyMode` is a Literal, not a free string: an unknown regime cannot be honoured,
@@ -64,7 +77,7 @@ class TaskPrivacyContract(BaseModel):
     navigationAllowlist: list[str] = []
 
 
-class PlanRequest(BaseModel):
+class PlanRequest(StrictModel):
     """Mirrors the extension's `RemoteAgentRequest` (sanitized data only)."""
 
     taskObjective: str = Field(min_length=1, max_length=2000)

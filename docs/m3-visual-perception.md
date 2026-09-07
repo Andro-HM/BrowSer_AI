@@ -203,12 +203,17 @@ proving laziness — the analyzer is not in the panel's initial bundle.
 > | `assets/vision-onnx-*.js` | 2.78 kB | first region needing pixels |
 > | `assets/pixel-stats-*.js` | 1.49 kB | with the vision chunk |
 > | `assets/ort.bundle.min-*.js` | 402.91 kB | first session create |
-> | `models/ort-wasm-simd-threaded.jsep.wasm` | 26.51 MB | first session create |
+> | `ort/ort-wasm-simd-threaded.jsep.wasm` | 26.51 MB | first session create |
 > | `models/icon-detect-640.onnx` | 11.68 MB | first session create |
 >
 > Removing the vision re-export from the `perception/visual` barrel moved the detector out of
 > the panel chunk (253.71 → 250.14 kB) and silenced rollup's `INEFFECTIVE_DYNAMIC_IMPORT`
 > warning — the build itself now proves the model is lazy.
+>
+> Layout note: the ORT wasm moved from `models/` to `ort/` when both ONNX consumers converged
+> on one runtime copy (PROJECT_STATUS §9q), and only the `jsep` variant now ships (§9r). After
+> BlazeFace and the ORT-variant prune the current total is **82 MB**; see §9r for the
+> per-variant reachability evidence and the full `dist/` composition.
 
 Runtime cost is bounded by construction: ≤ `MAX_REGIONS` (8) regions per run, one capture per
 band (visible viewport + ≤ `MAX_CAPTURE_BANDS` below-fold bands), each region downscaled to
@@ -484,21 +489,39 @@ The gate harness is gone; the guarantees it established are now permanent tests 
 
 ## 12. License — the unresolved item
 
-The OmniParser `icon_detect` **weights are AGPL-3.0**. The `microsoft/OmniParser` model card
-declares `license: mit`, but `icon_detect/LICENSE` in that same repository is the verbatim text
-of AGPL-3.0; the stricter file-level license is treated as governing, and the `onnx-community`
-re-export inherits it. This repository is `private: true` with no declared license. Bundling
-AGPL weights in a distributed extension has consequences that are a **project decision, not a
-technical one**, and it is recorded rather than glossed: see
-`extension/public/models/NOTICE.txt`.
+The OmniParser `icon_detect` **weights are AGPL-3.0**, and this is stated by upstream rather
+than inferred from a conflict:
 
-Permissively-licensed alternatives were found but are **PyTorch-only** — no ONNX artifact, so
-adopting one means owning an export step and re-measuring everything in §11:
+- The `microsoft/OmniParser` model card BODY says verbatim "icon_detect model is under AGPL
+  license" (and separately that the BLIP2/Florence captioners are MIT), then directs readers
+  to "the LICENSE file in the folder of each model".
+- `icon_detect/LICENSE` in that repository is the complete, unmodified GNU AGPL v3 text.
+- The card's YAML frontmatter `license: mit` is therefore **not a contradiction to resolve**:
+  it is one repo-level field on a repository that ships components under different licenses,
+  and the card scopes them per directory. Card and LICENSE agree.
+- Root cause, and why no re-export can change it: `icon_detect` is a fine-tuned Ultralytics
+  YOLOv8, and `ultralytics/ultralytics` is itself AGPL-3.0. The copyleft is intrinsic to the
+  lineage. The shipped ONNX comes from `onnx-community/OmniParser-icon_detect_640x640`
+  (revision `799bd041b5d053ed44651c2237ced04d8fdb2777`), which declares **no license at
+  all** — and an intermediary cannot grant more rights than the weights it re-exported.
 
-| Alternative | License | Size | Blocker |
-|---|---|---|---|
-| Salesforce/GPA-GUI-Detector | permissive | 38.69 MB | `.pt` only |
-| laywens/uitag-yolo11s | MIT | 18.31 MB | `.pt` only |
+This repository is `private: true` with no declared license. Bundling AGPL weights in a
+distributed extension has consequences that are a **project decision, not a technical one**,
+and it is recorded rather than glossed: see `extension/public/models/NOTICE.txt`.
+
+Alternatives must be judged at the **framework** level, not by their repo tag — a
+"YOLOv8"/"YOLO11"/"YOLOv5" derivative carries Ultralytics AGPL-3.0 however its model card is
+labelled. The permissive-looking candidates found are also PyTorch-only, so adopting one means
+owning an export step and re-measuring everything in §11:
+
+| Alternative | Tagged | Actual framework risk | Size | Blocker |
+|---|---|---|---|---|
+| Salesforce/GPA-GUI-Detector | permissive | needs framework check before trusting | 38.69 MB | `.pt` only |
+| laywens/uitag-yolo11s | MIT | ⚠️ **YOLO11s = Ultralytics → AGPL by lineage; the MIT tag is not dispositive** | 18.31 MB | `.pt` only |
+
+A genuinely permissive replacement therefore needs a non-Ultralytics architecture (DETR/RT-DETR,
+or an Apache-2.0 YOLOS variant — §9p of PROJECT_STATUS measured YOLOS-tiny and rejected it on
+accuracy).
 
 **Status: unresolved.** M3 is technically complete; the license question is open and must be
 settled before any public distribution.
@@ -510,12 +533,23 @@ settled before any public distribution.
 WebGPU needs a real GPU adapter, which Node does not have, so `npm test` exercises the **wasm**
 EP only. The WebGPU path was verified separately in a **headed Chromium on `http://localhost`**
 (secure context) against this project's own surfaces: `gpu=true`, session create 304 ms (fp32),
-per-region inference 87–110 ms, and the exact-parity result above. `executionProviders()` is
-unit-tested to emit `['webgpu','wasm']` so the fallback ordering itself is covered by CI even
-though the GPU path is not.
+per-region inference 87–110 ms, and the exact-parity result above.
 
-**What this means honestly:** the WebGPU → WASM fallback is verified end-to-end by hand and by
-construction, not by an automated GPU test. A regression in the WebGPU EP would not be caught
-by `npm test`; it would be caught by the wasm path continuing to work, which is the point of
-using one artifact for both.
+The fallback ordering itself IS covered by CI, at the level above ORT. The provider attempts
+**one EP per session-create**: `backendAttempts('webgpu')` → `['webgpu', 'wasm']` is the attempt
+sequence, and `executionProviders()` returns a single-entry list for each attempt
+(`['webgpu']`, then `['wasm']`). Handing ORT a two-entry list would let it fall back *internally
+and silently*, which is exactly what it used to do here — the created session reports nothing
+about the EP it settled on, so a run that quietly executed on wasm was indistinguishable from a
+real WebGPU run and `observation.backend` recorded the **request** rather than the fact. With one
+EP per attempt, the attempt that succeeds *is* the active EP, a refusal is logged as
+`VISION_BACKEND_REJECTED`, and the M10 WebGPU-vs-wasm latency split has something real to stand
+on. Unit tests cover both the attempt sequence and the case where ORT refuses WebGPU (the
+observation must then say `wasm`).
+
+**What this means honestly:** the WebGPU → WASM fallback is verified end-to-end by hand and, for
+its control flow, by unit test — but not by an automated GPU test. A regression in the WebGPU EP
+would not be caught by `npm test`; it would show up as the wasm path continuing to work, which
+is the point of using one artifact for both, and as `backend: 'wasm'` in the M10 performance
+report where a GPU host previously reported `webgpu`.
 

@@ -1,44 +1,216 @@
-BUNDLED MODEL — PROVENANCE AND LICENSE
-======================================
+BUNDLED MODEL ASSETS — PROVENANCE AND LICENSE
+=============================================
 
-File: icon-detect-640.onnx
-Model: OmniParser `icon_detect` (v1), YOLOv8n backbone, single class
-       ("interactable element"), static 640x640 input, ONNX opset export.
-Source of the ONNX artifact:
-       https://huggingface.co/onnx-community/OmniParser-icon_detect_640x640
+Every binary this extension redistributes is listed below with the source it was
+actually taken from (verified, not assumed) and the license that governs it. Where the
+licensing is unresolved that is stated as unresolved; nothing here is smoothed over.
+
+NO NETWORK AT RUNTIME: every file below is packaged into the extension and loaded via
+chrome.runtime.getURL(). All inference is local by construction — no pixels and no model
+requests leave the device.
+
+
+1. icon-detect-640.onnx — UI ELEMENT DETECTOR (M3 vision)
+---------------------------------------------------------
+Model:      OmniParser `icon_detect` (v1). Fine-tuned YOLOv8n, single class
+            ("interactable element"), static 640x640 input, fp32.
+File:       11.68 MiB (12,251,xxx bytes), producer `pytorch 2.5.0` (torch.onnx.export),
+            input tensor `images`, Ultralytics layer naming (`model.0.conv.*`).
+ONNX taken from:
+            https://huggingface.co/onnx-community/OmniParser-icon_detect_640x640
+            repo revision 799bd041b5d053ed44651c2237ced04d8fdb2777 (2024-11-01),
+            file `onnx/model.onnx`. That repo declares NO license of its own — no
+            LICENSE file, no `license:` metadata, no model card (README 404s). A
+            re-export cannot grant more rights than the weights it was derived from,
+            so the upstream license below is the one that governs.
 Upstream weights:
-       https://huggingface.co/microsoft/OmniParser  (directory: icon_detect/)
+            https://huggingface.co/microsoft/OmniParser, directory `icon_detect/`.
 
-LICENSE: GNU AFFERO GENERAL PUBLIC LICENSE v3.0 (AGPL-3.0).
+LICENSE: AGPL-3.0. This is stated by upstream, not inferred:
+  - The model card BODY says, verbatim: "icon_detect model is under AGPL license"
+    (and separately "icon_caption_blip2 & icon_caption_florence is under MIT
+    license"), then directs readers to "the LICENSE file in the folder of each model".
+  - `icon_detect/LICENSE` in that repository is the complete, unmodified text of the
+    GNU Affero General Public License v3 (19 November 2007).
+  - The card's YAML frontmatter says `license: mit`. That is a single repo-level
+    metadata field on a repository that ships components under DIFFERENT licenses; the
+    card's own body scopes it per directory. It is not evidence that icon_detect is MIT.
+  - Root cause, and why this is not a labelling mistake: icon_detect is a fine-tuned
+    Ultralytics YOLOv8, and ultralytics/ultralytics is itself AGPL-3.0. A YOLOv8
+    derivative inherits AGPL from its lineage.
 
-  The microsoft/OmniParser repository card declares `license: mit`, but the file
-  `icon_detect/LICENSE` in that same repository is the verbatim text of the GNU
-  Affero General Public License version 3. The stricter, file-level license is the
-  one that governs these weights, so they are treated here as AGPL-3.0. The
-  onnx-community re-export is derived from them and inherits that license.
+  Full license text: shipped beside the model as LICENSE-icon-detect-AGPL-3.0.txt
+  (34,523 bytes, sha256
+  0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0, retrieved from
+  https://www.gnu.org/licenses/agpl-3.0.txt). Attribution: OmniParser, Microsoft
+  (https://huggingface.co/microsoft/OmniParser), icon_detect; architecture and AGPL-3.0
+  lineage from Ultralytics YOLOv8 (https://github.com/ultralytics/ultralytics). The
+  redistributed artifact is a format conversion of those weights — no retraining, no
+  fine-tuning, no architectural change.
 
-  Full license text: https://www.gnu.org/licenses/agpl-3.0.txt
+DECISION — KEEP THE AGPL MODEL AND STATE THE OBLIGATION (not: swap it for something
+easier to license). The alternative was investigated rather than dismissed:
+  - Any YOLOv5/YOLOv8/YOLO11/Ultralytics-RT-DETR derivative inherits AGPL-3.0 from the
+    framework regardless of its model-card tag, so the "permissive YOLO UI detector"
+    category does not exist.
+  - Genuinely permissive detectors that are actually PRE-EXPORTED and small enough
+    (DETR / RT-DETR from lyuwenyu, Apache-2.0) ship COCO weights — an 80-class everyday
+    object detector. Substituting one would trade a working UI-element localizer for a
+    model that does not localize UI elements; the license would look better and the
+    capability would be gone.
+  - The permissive work that IS about GUIs is research code without released ONNX weights
+    (detectron2 Faster R-CNN implementations, wireframe-sketch classifiers), i.e. a
+    training project, not a file swap.
+  - YOLOS-tiny (Apache-2.0) was the one permissive candidate actually measured here, and
+    it was rejected on accuracy — see PROJECT_STATUS.md §9p. That is a measurement, not an
+    assumption, and it is why "just use a permissive model" is not an available option.
 
-CONSEQUENCE FOR THIS PROJECT — UNRESOLVED, DELIBERATELY NOT HIDDEN:
-  AGPL-3.0 is a copyleft license. Distributing this extension with these weights
-  requires the distribution to comply with AGPL-3.0. This repository currently
-  declares no license at all (`"private": true`, no LICENSE file), so that choice
-  has not been made yet and is not one this file can make.
+CONSEQUENCE — REAL, AND NOT DISCHARGEABLE BY THIS FILE:
+  AGPL-3.0 is a strong copyleft license. Distributing this extension with these weights
+  requires that distribution to comply with AGPL-3.0, which in practice means the
+  distributed work is offered under AGPL-3.0 with corresponding source available. This
+  repository declares no license at all (`"private": true`, no LICENSE file), so the
+  combined work is currently not distributed at all and the obligation has not yet been
+  triggered — but it WILL be on first public release.
 
-  If AGPL-3.0 is unacceptable, the vision provider is swappable without touching
-  the pipeline: it decodes a standard YOLOv8 detection head, so any equivalently
-  exported UI detector works by replacing this file. Permissively licensed
-  candidates that were located but ship PyTorch weights ONLY (an ONNX export step
-  would be required) include:
-    - Salesforce/GPA-GUI-Detector        (MIT, 38.69 MB .pt)
-    - laywens/uitag-yolo11s-ui-detect-v1 (MIT, 18.31 MB .pt, desktop UI domain)
+  What is done here: the license text travels with the binary, attribution is explicit,
+  and the derivation chain is recorded. What remains: choosing the repository's own
+  license. That is the owner's decision with legal effect, not a code change, and it is
+  the single reason section 1 is still marked open below.
 
-NO NETWORK AT RUNTIME: this file and the ONNX Runtime wasm binaries are packaged into
-the extension and loaded via chrome.runtime.getURL(). Inference is local by
-construction; no pixels and no model requests leave the device.
+  If AGPL-3.0 is ultimately unacceptable, the vision provider is swappable without
+  touching the pipeline: it decodes a standard YOLOv8 detection head, so any equivalently
+  exported UI detector works by replacing this one file (`VISION_MODEL_ASSET` in
+  providers/vision-onnx.ts). But per the bullets above, a replacement is a re-evaluation
+  with a measured accuracy gate, not a swap — and the DOM-first gate means this model only
+  runs when the DOM is insufficient, so degrading it degrades exactly the hard cases.
 
-ONNX Runtime Web binaries are NOT committed to this directory. They are copied into
-`dist/ort/` at build time from `node_modules/onnxruntime-web/dist` by the
-`copy-onnx-assets` plugin (vite.config.ts), and that one directory serves both ONNX
-consumers (this vision provider and the face-blur engine). onnxruntime-web is
-(c) Microsoft Corporation, MIT license.
+
+2. blazeface.onnx — FACE DETECTOR (M3 pre-OCR face blur)
+--------------------------------------------------------
+Shipped from:
+            extension/src/perception/visual/models/blazeface.onnx, copied into
+            dist/models/ by the `copy-onnx-assets` plugin (vite.config.ts).
+Model:      MediaPipe BlazeFace (short-range / "front", 128x128). NHWC [1,128,128,3] fp32
+            input; FOUR RAW SSD HEADS as output — per-anchor-layer scores [1,512,1] and
+            [1,384,1] plus per-anchor-layer regressors [1,512,16] and [1,384,16].
+            Nothing is baked in: the 896-anchor table, sigmoid, threshold, box decode and
+            NMS run in perception/visual/faceBlur.ts (`decodeRawHeads`).
+File:       433,256 bytes, sha256
+            e20e03f50cd975d820fc4c7fb596b709aea79dbcba33ada821644268f9e895c9.
+
+DIRECT SOURCE OF THE SHIPPED BYTES — verified by reproducing them, not assumed:
+            https://github.com/PINTO0309/PINTO_model_zoo, directory `030_BlazeFace`.
+            Distributed via the exact URL that directory's own `download.sh` uses:
+            https://s3.ap-northeast-2.wasabisys.com/pinto-model-zoo/030_BlazeFace/resources.tar.gz
+            (sha256 aff107888b8b3c73a02d82b63ecf62eae44dfe8390a9df5a3a57455f20f623b1).
+            The archive is NESTED; the shipped file is
+            `030_BlazeFace/01_float32/resources_new.tar.gz` ->
+            `face_detection_front_128x128_float32.onnx`.
+            Re-running scripts/fetch-blazeface.sh reproduces the sha256 above exactly.
+
+LICENSE: Apache-2.0. Established from the primary source, not from the fact that
+"BlazeFace is known to be permissive":
+  - PINTO_model_zoo places its own LICENSE file INSIDE `030_BlazeFace/`, and that file is
+    the complete, unmodified Apache License 2.0 text (11,323 bytes, sha256
+    283ea6cc2997a1a70da0049e09adf9317bb60ca1b51279b65196b83a69e1996b). It is shipped
+    beside the model as LICENSE-blazeface-Apache-2.0.txt.
+  - The per-directory file is what governs the WEIGHTS. The repository ROOT license is MIT
+    (GitHub API `license.spdx_id: MIT`), which covers PINTO's conversion tooling; the
+    directory-level Apache-2.0 is the narrower, applicable grant and is the one recorded
+    here. Citing the root MIT tag for the weights would be the same category of error as
+    citing OmniParser's repo-level `license: mit` in section 1.
+  - `030_BlazeFace/url.txt` attributes the weights upstream to
+    https://github.com/google/mediapipe/tree/master/mediapipe/models — i.e.
+    google-ai-edge/mediapipe, which is itself Apache-2.0. Directory grant and upstream
+    lineage agree.
+
+ATTRIBUTION REQUIRED BY Apache-2.0 §4, and discharged here: the license text travels with
+the binary (dist/models/LICENSE-blazeface-Apache-2.0.txt), attribution is recorded above,
+and the file is redistributed UNMODIFIED — no re-export, no quantization, no graph
+surgery, so there are no changes to state.
+
+STATUS: RESOLVED. Redistribution of this artifact is permitted under Apache-2.0.
+
+SUPERSEDED SOURCE — kept because the history matters, not to pad this file: the artifact
+previously committed here (535,842 bytes, sha256
+564740c5146673c840257402cee8309161848e48e64d277a862ab4d501adf8a5) was byte-identical to
+`T_mpipe_bface_boxes_ops16.onnx` from https://github.com/manthi4/End-to-end-BlazeFace-Onnx,
+which has no LICENSE file and reports `license: null` via the GitHub API — under default
+copyright, no grant of redistribution rights. It reached the repository because
+scripts/fetch-blazeface.sh's "primary" branch wrote the outer tarball straight to the
+`.onnx` output path and then merely PRINTED a note asking a human to extract it: the
+primary branch therefore "succeeded" while producing a gzip file, and the committed bytes
+came from the fallback. That script now performs the two-stage extraction itself and
+verifies the result is an ONNX protobuf rather than an archive.
+
+An earlier revision of this file claimed the swap needed "no code change ... provided the
+replacement keeps the [1,3,128,128] input and the graph-baked threshold/NMS output
+contract". THAT PROVISO DOES NOT HOLD and the claim was wrong: the primary source is NHWC
+with raw heads. The decode was therefore implemented (`decodeRawHeads`, unit-tested
+against the MediaPipe anchor spec), and faceBlur.ts now dispatches on the loaded graph's
+own input/output shapes so EITHER contract works. Licensing choices and code are
+decoupled: replacing this one file cannot break the pipeline in either direction.
+Verified after the swap: tests/e2e/face-detection.spec.ts detects the single real face
+exactly once in headless Chromium with the WASM EP.
+
+
+3. dist/ort/ — ONNX RUNTIME WEB (shared by BOTH models above)
+-------------------------------------------------------------
+Files:      ort-wasm-simd-threaded.jsep.wasm  (27.8 MiB)
+            ort-wasm-simd-threaded.jsep.mjs   (glue; loaded as a sibling module)
+Source:     npm `onnxruntime-web@1.29.0` (exact pin), directory `dist/`, copied verbatim
+            at build time by the `copy-onnx-assets` plugin. Upstream project:
+            https://github.com/microsoft/onnxruntime
+LICENSE:    MIT (microsoft/onnxruntime LICENSE; the `license` field of the published npm
+            package; and package-lock.json records `onnxruntime-web` 1.29.0 and its
+            `onnxruntime-common` 1.29.0 peer as MIT). Redistribution is permitted; the
+            MIT text and copyright notice must travel with it. The lockfile pins the
+            exact version, so the provenance is reproducible.
+
+WHY ONLY THE `jsep` VARIANT IS SHIPPED (relevant to attribution completeness — the other
+variants are absent by derivation, not by oversight): the browser entry point our code
+resolves to, `dist/ort.bundle.min.mjs`, hard-codes exactly these two asset names. The
+`asyncify`, `jspi` and non-JSEP base binaries belong to entry points nothing here
+imports. JSEP *is* the WebGPU execution provider and the same artifact serves the
+wasm/CPU fallback, so one binary covers both execution paths. See vite.config.ts.
+
+
+4. dist/ocr/ — TESSERACT OCR RUNTIME (M3 text analyzer)
+-------------------------------------------------------
+Files:      worker.min.js
+            core/tesseract-core-simd-lstm.wasm  + core/tesseract-core-simd-lstm.wasm.js
+            core/tesseract-core-lstm.wasm       + core/tesseract-core-lstm.wasm.js
+            lang/eng.traineddata.gz
+Source:     npm `tesseract.js` 6.0.1 (worker) and `tesseract.js-core` 6.1.2 (wasm cores),
+            resolved versions per package-lock.json, plus the English LSTM traineddata.
+            Upstream projects: https://github.com/naptha/tesseract.js and
+            https://github.com/tesseract-ocr/tesseract
+LICENSE:    Apache-2.0 for tesseract.js, tesseract.js-core and Tesseract itself — as
+            declared by both packages and recorded in package-lock.json.
+            `eng.traineddata` is distributed by tesseract-ocr/tessdata under Apache-2.0.
+            Redistribution is permitted with the license text and NOTICE preserved.
+
+BOTH wasm cores are required and neither is redundant: worker.min.js probes SIMD support
+at runtime (`WebAssembly.validate`) and picks `core/tesseract-core-simd-lstm.wasm.js` or
+`core/tesseract-core-lstm.wasm.js` accordingly, and our config passes only the core
+DIRECTORY (`corePath`), so the worker — not us — resolves the filename. Dropping the
+non-SIMD core would break every non-SIMD environment. This is the opposite of the ORT
+case above, where the unshipped variants are unreachable from the imported entry point.
+
+
+5. WHAT THIS FILE DOES NOT DO
+-----------------------------
+This is a provenance record, not a license grant. Sections 2, 3 and 4 are resolved:
+blazeface.onnx is Apache-2.0 from a primary source, and the ORT and Tesseract runtimes are
+MIT/Apache-2.0 with versions pinned in package-lock.json. Every one of the four asset
+groups now ships with the license text that governs it, correct attribution, and a
+verified source.
+
+ONE ITEM REMAINS OPEN, and it is not a code defect: the AGPL-3.0 obligation attached to
+icon-detect-640.onnx (§1) becomes binding on first public distribution, and discharging it
+means choosing this repository's own license (`"private": true`, no LICENSE/NOTICE/COPYING
+at the root). That is the owner's decision with legal effect. Everything that CAN be done
+without making that decision has been done: license text shipped, attribution explicit,
+lineage traced to the framework level, and the permissive alternatives investigated and
+recorded rather than waved away. All four asset groups load and run.

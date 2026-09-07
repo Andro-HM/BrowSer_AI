@@ -134,9 +134,9 @@ class GeminiProvider:
         if not isinstance(parsed, PlanResult):
             raise GeminiUnavailableError()
 
-        # POST-SCAN: the model's own output must never carry raw PII.
-        leaked = scan_pii(parsed.reason, parsed.action.value if parsed.action else None)
-        if leaked:
+        # POST-SCAN: the model's own output must never carry raw PII. `scan_pii` returns
+        # category names, so nothing here can echo a matched value into the error.
+        if scan_pii(parsed.reason, parsed.action.value if parsed.action else None):
             raise GeminiPIILeakError()
 
         if parsed.done or parsed.action is None:

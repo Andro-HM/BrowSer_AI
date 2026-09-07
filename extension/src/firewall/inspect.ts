@@ -15,6 +15,11 @@
 //   3. CONTENT SCAN — the same local PII detector used on-page (M2 `detectPII`) runs
 //      over every text-bearing string in the payload. One hit ⇒ BLOCK: if the payload
 //      still contains a detectable email/phone/card/credential pattern, it is not clean.
+//   4. PIXEL PAYLOAD — no text-bearing string may carry an encoded image. This is a
+//      SEPARATE check because the content scan cannot do it: base64 matches no PII
+//      pattern, so a viewport capture pasted into `sanitizedVisibleText` would otherwise
+//      be structurally valid and pattern-clean, and would ride out through a legal field.
+//      Raw pixels crossing the boundary is the one thing M3 exists to prevent.
 //
 // What the firewall deliberately does NOT claim: it cannot prove the absence of raw
 // values the detector does not recognize (e.g. free-text names). That residual risk is
@@ -105,12 +110,39 @@ function isValidContract(policy: unknown): boolean {
  * so they cannot match any detector pattern.
  */
 function payloadContainsDetectablePII(request: RemoteAgentRequest): boolean {
+  return textBearingStrings(request).some((text) => detectPII(text).length > 0);
+}
+
+/** Every string in the payload that could plausibly carry page-derived content. */
+function textBearingStrings(request: RemoteAgentRequest): string[] {
   const texts: string[] = [request.sanitizedVisibleText, request.taskObjective];
   for (const node of request.sanitizedPageStructure) {
     if (node.label !== undefined) texts.push(node.label);
     if (node.name !== undefined) texts.push(node.name);
   }
-  return texts.some((text) => detectPII(text).length > 0);
+  return texts;
+}
+
+/** A `data:` URL for image/video/audio content — i.e. an inline media payload. */
+const MEDIA_DATA_URL = /data:(?:image|video|audio)\//i;
+/**
+ * An unbroken base64-ish run long enough to be a payload rather than a word. A real
+ * capture is tens of thousands of characters; ordinary prose, selectors, labels and
+ * aliases never produce a 256-character run without a space or punctuation break. The
+ * threshold is deliberately well clear of both, so the check does not degenerate into a
+ * second, sloppier PII filter that trips on the WORD "base64".
+ */
+const BASE64_RUN = /[A-Za-z0-9+/]{256,}={0,2}/;
+
+/**
+ * True when a string carries encoded pixels. Checked independently of the PII scan
+ * because the two failure modes are unrelated: PII is a pattern in text, a capture is a
+ * blob with no pattern at all.
+ */
+function containsPixelPayload(request: RemoteAgentRequest): boolean {
+  return textBearingStrings(request).some(
+    (text) => MEDIA_DATA_URL.test(text) || BASE64_RUN.test(text),
+  );
 }
 
 export function createPrivacyFirewall(): PrivacyFirewall {
@@ -188,6 +220,12 @@ export function createPrivacyFirewall(): PrivacyFirewall {
       // 3 — content scan (run last so a malformed payload is reported as such first).
       if (payloadContainsDetectablePII(request)) {
         return Promise.resolve(deny('FIREWALL_PII_DETECTED'));
+      }
+
+      // 4 — pixel payload. Distinct from the PII scan and never folded into it: an
+      // encoded capture has no PII pattern, so the scan above cannot see it.
+      if (containsPixelPayload(request)) {
+        return Promise.resolve(deny('FIREWALL_PIXEL_PAYLOAD'));
       }
 
       return Promise.resolve(allow());

@@ -6,6 +6,11 @@
 // transmitted. The ImageBitmap is explicitly closed so the decoded frame does not
 // linger in memory.
 //
+// The `fetch()` below is a DATA-URL DECODE, not network I/O, and the scheme guard makes
+// that structural rather than incidental: an audit of egress paths (master §11 — the
+// firewall must be the SINGLE egress) should be able to dismiss this call by reading the
+// guard, without having to trace every caller to prove the input is local.
+//
 // Cropping happens here rather than at capture time because Chrome's
 // `captureVisibleTab` only returns whole visible tabs — there is no partial-capture
 // API. We therefore discard everything outside the selected region immediately and
@@ -46,6 +51,10 @@ function createCanvasContext(width: number, height: number): Canvas2d | null {
 export function createBrowserRasterizer(): RasterizeFn {
   return async (captureDataUrl, region, options) => {
     if (typeof createImageBitmap !== 'function' || typeof fetch !== 'function') return null;
+    // Data URLs only. A capture is always `data:image/...` from `captureVisibleTab`, so
+    // this rejects nothing real — it removes the possibility that a future caller turns
+    // this decode into an off-device request. Fail closed: unrecognised input, no raster.
+    if (typeof captureDataUrl !== 'string' || !captureDataUrl.startsWith('data:')) return null;
 
     let bitmap: ImageBitmap | null = null;
     try {

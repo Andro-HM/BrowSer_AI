@@ -9,6 +9,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  backendAttempts,
   createVisionOnnxProvider,
   executionProviders,
 } from '../../extension/src/perception/visual/providers/vision-onnx';
@@ -63,17 +64,19 @@ interface FakeRuntime {
   runs(): number;
   released(): number;
   lastOptions(): Record<string, unknown> | undefined;
+  /** Every create's options, in order — the EP attempt sequence. */
+  allOptions(): Record<string, unknown>[];
 }
 
 /** Minimal stand-in for onnxruntime-web that returns a fixed detection head. */
 function fakeRuntime(
   boxes: { cx: number; cy: number; w: number; h: number; score: number }[],
-  behaviour: { failCreate?: boolean; failRun?: boolean } = {},
+  behaviour: { failCreate?: boolean; failRun?: boolean; rejectEP?: string } = {},
 ): FakeRuntime {
   let creates = 0;
   let runs = 0;
   let released = 0;
-  let lastOptions: Record<string, unknown> | undefined;
+  const optionsLog: Record<string, unknown>[] = [];
 
   const module: VisionRuntime = {
     env: { wasm: {} },
@@ -87,9 +90,14 @@ function fakeRuntime(
     InferenceSession: {
       create(_path: string | Uint8Array, options?: Record<string, unknown>) {
         creates++;
-        lastOptions = options;
+        if (options !== undefined) optionsLog.push(options);
         if (behaviour.failCreate === true) {
           return Promise.reject(new Error('no available backend found'));
+        }
+        const requested = (options?.executionProviders ?? []) as string[];
+        if (behaviour.rejectEP !== undefined && requested.includes(behaviour.rejectEP)) {
+          // Exactly how ORT reports an EP it cannot honour for this graph.
+          return Promise.reject(new Error(`backend not found: ${behaviour.rejectEP}`));
         }
         return Promise.resolve<VisionSession>({
           inputNames: ['images'],
@@ -113,7 +121,8 @@ function fakeRuntime(
     creates: () => creates,
     runs: () => runs,
     released: () => released,
-    lastOptions: () => lastOptions,
+    lastOptions: () => optionsLog[optionsLog.length - 1],
+    allOptions: () => optionsLog,
   };
 }
 
@@ -126,12 +135,21 @@ function provider(runtime: FakeRuntime, confidence = 0.1) {
   });
 }
 
-describe('executionProviders', () => {
+describe('backend attempts and execution providers', () => {
   it('tries WebGPU first and keeps wasm as the fallback for the SAME model', () => {
-    expect(executionProviders('webgpu')).toEqual(['webgpu', 'wasm']);
+    expect(backendAttempts('webgpu')).toEqual(['webgpu', 'wasm']);
   });
 
   it('uses the wasm build for both wasm and cpu decisions — no second download', () => {
+    expect(backendAttempts('wasm')).toEqual(['wasm']);
+    expect(backendAttempts('cpu')).toEqual(['wasm']);
+  });
+
+  it('gives ORT ONE ep per attempt so the successful attempt IS the active EP', () => {
+    // A two-entry list lets ORT fall back internally and silently, which would make
+    // `observation.backend` (and every WebGPU-vs-wasm latency number built on it) a
+    // record of what was REQUESTED rather than what ran.
+    expect(executionProviders('webgpu')).toEqual(['webgpu']);
     expect(executionProviders('wasm')).toEqual(['wasm']);
     expect(executionProviders('cpu')).toEqual(['wasm']);
   });
@@ -157,10 +175,45 @@ describe('vision provider — model lifecycle', () => {
     expect(runtime.runs()).toBe(3);
   });
 
-  it('passes the capability decision through as the EP list', async () => {
+  it('passes the capability decision through as a single-EP attempt', async () => {
     const runtime = fakeRuntime([]);
     await provider(runtime).analyze(raster(), region('a', 0, 0), 'webgpu');
-    expect(runtime.lastOptions()?.executionProviders).toEqual(['webgpu', 'wasm']);
+    expect(runtime.lastOptions()?.executionProviders).toEqual(['webgpu']);
+    expect(runtime.creates()).toBe(1);
+  });
+
+  it('falls back to wasm when ORT refuses WebGPU, and REPORTS wasm — not the request', async () => {
+    // The case the old two-EP list hid: ORT declined WebGPU, ran on wasm, and the
+    // observation still said `webgpu`. Here the refusal is a distinct failed attempt,
+    // so the EP that answered is a fact rather than an assumption.
+    const runtime = fakeRuntime([{ cx: 320, cy: 320, w: 128, h: 64, score: 0.62 }], {
+      rejectEP: 'webgpu',
+    });
+    const [observation] = await provider(runtime).analyze(raster(), region('r', 0, 0), 'webgpu');
+
+    expect(runtime.allOptions().map((o) => o.executionProviders)).toEqual([['webgpu'], ['wasm']]);
+    expect(observation?.backend).toBe('wasm');
+    // The fallback is a real session: elements still come back.
+    expect(observation?.elements).toHaveLength(1);
+  });
+
+  it('does not re-attempt WebGPU per region after it was refused once', async () => {
+    const runtime = fakeRuntime([], { rejectEP: 'webgpu' });
+    const vision = provider(runtime);
+    for (const id of ['a', 'b', 'c']) {
+      await vision.analyze(raster(), region(id, 0, 0), 'webgpu');
+    }
+    // 2 = one refused WebGPU attempt + one successful wasm session, cached thereafter.
+    expect(runtime.creates()).toBe(2);
+    expect(runtime.runs()).toBe(3);
+  });
+
+  it('degrades honestly when EVERY attempt is refused', async () => {
+    const runtime = fakeRuntime([], { rejectEP: 'wasm' });
+    const [observation] = await provider(runtime).analyze(raster(), region('r', 0, 0), 'wasm');
+    expect(observation?.elements).toBeUndefined();
+    expect(observation?.backend).toBeUndefined();
+    expect(observation?.observations).toEqual(['text_like_content']);
   });
 
   it('pins wasm to a single thread and no proxy worker (MV3 CSP)', async () => {

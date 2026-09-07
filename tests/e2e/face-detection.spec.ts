@@ -1,17 +1,23 @@
-// M7.5 — e2e: REAL face detection + pre-OCR blurring, end-to-end in the extension.
+// M3 — e2e: REAL face detection + pre-OCR blurring, end-to-end in the extension.
+// (Developed under the working label "M7.5"; authoritative milestone is M3, per
+// PROJECT_STATUS.md §0A. BlazeFace is a specialized privacy detector, not the general
+// UI element detector.)
 //
-// This is the first test that exercises the face stage with an ACTUAL face: BlazeFace
+// This is the test that exercises the face stage with an ACTUAL face: BlazeFace
 // (ONNX WASM, on-device) must detect the face in the raster and black it out BEFORE
 // the OCR analyzer reads it.
-//   - faceStats.facesDetected >= 1  → detection happened
+//   - faceStats.facesDetected === 1  → the one face on the page is found ONCE. The
+//     shipped Apache-2.0 export emits raw SSD heads, so the 896-anchor decode, threshold
+//     and NMS run in `faceBlur.ts`; a broken NMS shows up here as duplicate boxes on a
+//     single face, which "≥ 1" would have hidden.
 //   - faceStats.facesBlurred  >= 1  → the in-place black-out happened (service order:
 //     faceBlur.blur(raster) runs before analyzer.analyze(raster, …))
 //   - contentStatus === 'ok'        → the OCR pass still ran after the blur (pipeline
 //     continuity)
 //
-// The image is the SAME person.jpg the model exporter used in their own notebook — a
-// real face, which BlazeFace is trained to detect. A cartoon "synthetic face" would not
-// be detected, and asserting otherwise would be fabrication.
+// The image is a real photographed face, which is what BlazeFace is trained to detect. A
+// cartoon "synthetic face" would not be detected, and asserting otherwise would be
+// fabrication.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,8 +55,8 @@ test('BlazeFace detects and blurs a real face before OCR (on-device WASM)', asyn
   expect(stats?.faceStats, 'faceStats must be populated by the face engine').toBeTruthy();
   expect(
     stats?.faceStats?.facesDetected,
-    'a real face must be detected in the raster',
-  ).toBeGreaterThanOrEqual(1);
+    'the one face on the page must be detected exactly once (anchor decode + NMS)',
+  ).toBe(1);
   expect(
     stats?.faceStats?.facesBlurred,
     'the detected face must be blacked out before OCR',
