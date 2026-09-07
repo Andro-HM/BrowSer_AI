@@ -33,9 +33,12 @@ CONSEQUENCE FOR THIS PROJECT — UNRESOLVED, DELIBERATELY NOT HIDDEN:
     - Salesforce/GPA-GUI-Detector        (MIT, 38.69 MB .pt)
     - laywens/uitag-yolo11s-ui-detect-v1 (MIT, 18.31 MB .pt, desktop UI domain)
 
-NO NETWORK AT RUNTIME: this file and the ONNX Runtime wasm binaries beside it are
-packaged into the extension and loaded via chrome.runtime.getURL(). Inference is
-local by construction; no pixels and no model requests leave the device.
+NO NETWORK AT RUNTIME: this file and the ONNX Runtime wasm binaries are packaged into
+the extension and loaded via chrome.runtime.getURL(). Inference is local by
+construction; no pixels and no model requests leave the device.
 
-ONNX Runtime Web binaries in this directory (ort-wasm-simd-threaded.jsep.*) are
-part of onnxruntime-web, (c) Microsoft Corporation, MIT license.
+ONNX Runtime Web binaries are NOT committed to this directory. They are copied into
+`dist/ort/` at build time from `node_modules/onnxruntime-web/dist` by the
+`copy-onnx-assets` plugin (vite.config.ts), and that one directory serves both ONNX
+consumers (this vision provider and the face-blur engine). onnxruntime-web is
+(c) Microsoft Corporation, MIT license.

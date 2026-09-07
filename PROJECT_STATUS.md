@@ -1,10 +1,14 @@
 # PrivAgent — PROJECT_STATUS
 
-_Last updated: 2026-09-04_
-_Author: M3 closed out with a REAL local vision model (§00) — OmniParser `icon_detect` ONNX
-through onnxruntime-web, verified by real inference, not mocks. Previous entry: all gates
-re-verified from a clean tree (§9k); M6 audit gaps closed with an explicit task privacy
-contract (§9l)._
+_Last updated: 2026-09-05_
+_Author: `other-pr3` (M7.5 face detection + M8 Gemini Flash) merged into `integrate-f`
+(M3's real local vision model) — conflicts resolved, one merge defect found and fixed, all
+gates re-measured on the merged tree (§9q). Previous entries: M3 closed out with a REAL
+local vision model (§00) — OmniParser `icon_detect` ONNX through onnxruntime-web, verified
+by real inference, not mocks; all gates re-verified from a clean tree (§9k); M6 audit gaps
+closed with an explicit task privacy contract (§9o). The merged work itself: on-device face
+detection (§9l), the Gemini Flash provider on the backend seam (§9m) and its side-panel
+planner toggle (§9n)._
 _Engineering rules: [CONTRIBUTING.md](CONTRIBUTING.md) (formerly `CLAUDE.md`; section
 numbers unchanged)._
 
@@ -1368,6 +1372,192 @@ Earlier sections are point-in-time snapshots and were left intact for history: �
 
 ---
 
+## 9l. On-device face detection (ONNX WASM), page-type classification, policy gate
+
+_Added 2026-09-02. All gates below were actually executed (CLAUDE.md→CONTRIBUTING §22)._
+
+### Scope
+
+M7.5 milestone: on-device BlazeFace face detection + blurring via ONNX Runtime Web
+(WASM backend ONLY — WebGPU is unstable in MV3 contexts and fails silently), a
+rule-based page-type classifier wired into the policy layer, and the model/runtime
+build plumbing. Zero remote calls.
+
+### Design decisions
+
+- **Face blur runs in the side panel, not the offscreen document.** The M3
+  split-by-context decision put rasterization + analysis in the panel; the face-blur
+  step consumes THAT raster where it lives. Moving inference to the (unregistered M0)
+  offscreen document would add a cross-document pixel message path and a new
+  permission for zero capability gain. The offscreen doc stays reserved (its M0
+  header says the same).
+- **Model source deviation, documented**: the spec named PINTO_model_zoo
+  `307_BlazeFace` — the directory is `030_BlazeFace` and its model tarball is served
+  from an S3 host blocked by the build sandbox. A reachable end-to-end export with an
+  IDENTICAL runtime contract was used instead (NCHW `[1,3,128,128]` input; graph-baked
+  0.7 threshold + NMS; [N,16] normalized output rows). `scripts/fetch-blazeface.sh`
+  tries the PINTO source first, then the mirror.
+- **Normalization evidence beats the brief**: the brief said [0,1]; the exporter's own
+  notebook normalizes `x/127.5 - 1.0` → [-1,1] (MediaPipe TFLite heritage).
+  CONTRIBUTING §3 (never invent) — evidence wins; the constant is isolated in
+  `preprocessRaster`.
+- **Engine is runtime-agnostic**: `createFaceBlurEngine({createSession})` accepts any
+  `FaceSessionLike` (minimal `{inputNames, run}` shape); the real ORT session is
+  wrapped into it. Tests mock the session entirely (ONNX WASM cannot run under Vitest)
+  and the pre/post-processing, parsing and pixel-blur functions are pure and directly
+  tested. Model absence → `FACE_BLUR_UNAVAILABLE` trace once, zero faces, pipeline
+  continues (availability remembered — no retry spam).
+- **Page classifier is rule-based by design** (the brief itself rules out
+  MobileViT-XXS: an ImageNet classifier cannot classify page types). Priority order
+  payment → auth → form → medical → general with the spec'd confidences; TODO marks
+  the MobileViT ONNX upgrade path in `pageClassifier.ts`.
+- **Policy gate never weakens a BLOCK**: payment/auth page types floor the overall
+  decision at SANITIZE and add the `visual_high_risk` signal; an existing BLOCK
+  survives (fail closed, Rule 7). `visualContext` travels on `PolicyReport`
+  (informational, value-free — categories only).
+- **PART D (CSP)**: the manifest CSP already carries `'wasm-unsafe-eval'` (set for
+  Tesseract) — the ORT WASM backend needs nothing more. `web_accessible_resources`
+  was deliberately NOT added: the model/runtime are fetched by the extension's own
+  panel page, which needs no WAR — exposing them to web pages would be a
+  fingerprinting surface.
+
+### Files
+
+- Added: `extension/src/perception/visual/faceBlur.ts`, `extension/src/perception/visual/pageClassifier.ts`,
+  `extension/src/perception/visual/models/README.md`, `scripts/fetch-blazeface.sh`,
+  `tests/unit/perception/visual/{pageClassifier,faceBlur,policy-visual-context}.test.ts`
+- Modified: `extension/src/types/contracts.ts` (`VisualPageType`, `PageClassification`,
+  `visual_high_risk` signal, `PolicySignals.visualContext`, `PolicyReport.visualContext`,
+  `VisualPerceptionResult.faceStats`), `extension/src/policy/index.ts` (page-type gate),
+  `extension/src/perception/visual/service.ts` (blur-before-OCR + `faceStats`),
+  `extension/src/agent/loop.ts` + `extension/src/sidepanel/App.tsx` (classification wiring),
+  `extension/src/diag/ocr-trace.ts` (face-blur stages), `vite.config.ts` (ONNX asset copy),
+  `package.json` (`onnxruntime-web 1.29.0`, pinned exact)
+
+### Validation — actually executed
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npm run typecheck` | ✅ pass |
+| Lint | `npm run lint` | ✅ pass |
+| Unit + integration | `npm test` | ✅ **342 passed / 342** (+18: classifier, face engine, policy gate) |
+| Bench | `npm run bench` | ✅ 3 passed |
+| Build | `npm run build` | ✅ pass (`dist/ort/` copied; model optional) |
+| E2E | `npm run e2e` | ✅ **23 passed / 23** |
+| Backend | `pytest -q` | ✅ 10 passed / 10 |
+
+### Runtime verification — NOW REAL (2026-09-02, same session as §9l)
+
+A dedicated e2e (`tests/e2e/face-detection.spec.ts`) renders a REAL face
+(`person.jpg`, the exact image the model exporter's own notebook used) and drives the
+full pipeline in headless Chromium: BlazeFace (ONNX WASM, on-device) **detected the
+face and blacked it out before OCR** — `faceStats.facesDetected >= 1`,
+`facesBlurred >= 1`, `contentStatus: 'ok'`. Measured, not inferred.
+
+Three real defects were found and fixed while proving this:
+1. **Partial ORT runtime copy**: ORT 1.29 dynamically imports the glue by runtime-
+   selected name (e.g. `ort-wasm-simd-threaded.jsep.mjs`); shipping only the base pair
+   failed with a "dynamically imported module" backend error. The build now copies
+   EVERY `ort-wasm*.{mjs,wasm}` variant.
+2. **Input-name matcher**: the model's image input is named `image`, not `input` — the
+   keyword matcher silently missed it and returned zero faces. `pickImageInput` now
+   accepts both spellings.
+3. **Nearest-neighbour downscale** lost face detail; bilinear interpolation (the
+   exporter's own `cv2.resize` default) is used.
+
+### Known limitations
+
+- A cartoon "synthetic face" is deliberately NOT used as the fixture (BlazeFace is
+  trained on real faces; claiming otherwise would be fabrication) — the fixture is a
+  real face photo.
+- The end-to-end model reports detections WITHOUT per-face scores (threshold + NMS are
+  in-graph) — `facesDetected`/`facesBlurred` counts are the honest surface.
+- Page classifier sees DOM structure/text only; canvas-only page types are invisible to
+  it (documented; MobileViT upgrade path marked in code).
+
+---
+
+## 9m. M8 — Gemini Flash provider on the AGENT_PROVIDER seam
+
+_Added 2026-09-02._
+
+### Scope
+
+Wired Gemini Flash into the backend `AGENT_PROVIDER` seam: `AGENT_PROVIDER=gemini`
+selects `GeminiProvider` (default model `gemini-2.0-flash`, overridable via
+`GEMINI_MODEL`; key via `GEMINI_API_KEY`). The offline `deterministic` planner remains
+the default and requires no key — CI passes without any API credentials.
+
+### Design decisions
+
+- **Lazy SDK import**: `agent.py` imports the provider only when `gemini` is selected,
+  so the deterministic default never depends on `google-genai`.
+- **Native structured JSON**: Gemini `response_schema=PlanResult` +
+  `response_mime_type="application/json"` guarantee valid JSON without markdown.
+- **Contract preserved**: the provider adapts the LLM's single `{action, done, reason}`
+  into the endpoint's `{"actions": [...]}` shape the extension expects (SCROLL
+  `direction: up|down` → signed `amount`). No existing test or the extension contract
+  changed.
+- **Fail-closed, defense-in-depth**:
+  - PRE-SCAN (endpoint, ALL providers): `taskObjective` + `sanitizedVisibleText`
+    scanned for raw email/phone/Luhn-card → HTTP 422.
+  - POST-SCAN (provider): model output `value` + `reason` scanned → HTTP 502 on a leak.
+  - API failure (rate limit/network) → HTTP 502 `llm_unavailable`.
+  - Missing `GEMINI_API_KEY` → HTTP 500 (raised on the planning path only, never /health).
+
+### Files
+
+- Added: `app/pii_scan.py`, `app/gemini_provider.py`, `tests/test_gemini_provider.py`
+- Modified: `app/agent.py` (seam), `app/main.py` (pre-scan + error mapping),
+  `requirements.txt` (`google-genai>=1.0`)
+
+### Validation — actually executed
+
+Backend `pytest -q`: **19 passed / 19** (10 existing incl. `test_plan.py` +
+`test_health.py` all green, +9 Gemini). Full repo gates: typecheck ✅ lint ✅
+vitest 342/342 ✅ bench 3/3 ✅ build ✅ e2e 24/24 ✅. Mocked client only — no real API calls.
+
+### Known limitations
+
+- Model output is only scanned for PATTERN-detectable PII (mirrors the extension
+  detector); undetectable free-text values are bounded by the client-side firewall.
+- No live-call integration test in CI (no key); verified via mocks.
+- Ollama (`AGENT_PROVIDER=remote`) remains the loud-501 seam (S4, postponed).
+
+---
+
+## 9n. Side panel ↔ Gemini backend wiring (planner toggle)
+
+_Added 2026-09-02._
+
+### Scope
+
+`AgentTask.tsx` now offers a **Use Gemini AI Planner** checkbox (default ON). Checked → the
+agent loop uses `createRemoteHttpAgentGateway({ endpoint: 'http://localhost:8000/v1/plan',
+firewall })` (the FastAPI backend, `AGENT_PROVIDER=gemini` when a key is set). Unchecked →
+the offline deterministic planner. One firewall instance is shared by the loop gate and the
+gateway's pre-transmit gate.
+
+### Verification — actually executed
+
+- Remote path proven end-to-end with a throwaway probe (backend live at :8000 with the
+  deterministic provider as the offline stand-in — identical HTTP contract): the real
+  extension, toggle ON, completed a fill-and-submit task against the live endpoint, then the
+  probe was removed.
+- e2e offline specs (agent-task, bench-tasks ×4, below-fold, navigation, telemetry-panel)
+  now explicitly uncheck the toggle so CI stays offline/deterministic; agent-task asserts the
+  toggle defaults ON.
+- Gates: typecheck ✅ lint ✅ vitest 342/342 ✅ bench 3/3 ✅ build ✅ e2e **24/24** ✅ backend 19/19 ✅.
+
+### Known limitations
+
+- Live Gemini verification requires a `GEMINI_API_KEY` (backend, `AGENT_PROVIDER=gemini`)
+  — not exercised in CI; the HTTP contract is identical to the verified deterministic path.
+- Toggle state is per-panel-session (not persisted); localhost backend must be running for
+  the checked path, else the loop fails closed with `PLANNER_FAILED`.
+
+---
+
 ## 10. Corrections to earlier milestone claims
 
 Recorded for honesty (CONTRIBUTING.md §22) — these were found while starting M3, not introduced by
@@ -1388,7 +1578,7 @@ it.
 
 ---
 
-## 9l. M6 audit gap closure — explicit task privacy contract (2026-09-02)
+## 9o. M6 audit gap closure — explicit task privacy contract (2026-09-02)
 
 _Scope: the five gaps named by the read-only M6 audit, and nothing else. No M7 work, no
 AI/LLM/VLM, no architecture change, no M0–M5 logic touched._
@@ -1466,7 +1656,7 @@ this scope ("do not rewrite unrelated navigation logic") and is listed in §11.
 
 ---
 
-## 9m. M3 model gate — YOLOS-tiny measured, REJECTED, removed (2026-09-03)
+## 9p. M3 model gate — YOLOS-tiny measured, REJECTED, removed (2026-09-03)
 
 ### Scope
 
@@ -1596,11 +1786,120 @@ coverage already lives in `tests/unit/visual-restricted.test.ts` — no new file
 
 ---
 
+## 9q. Merge — `other-pr3` (M7.5 + M8) into `integrate-f` (M3 vision) (2026-09-05)
+
+_The two branches diverged at `f2502a4` and were developed in parallel. Everything below
+was measured on the MERGED tree in this workspace — not quoted from either branch
+(CONTRIBUTING.md §20/§22)._
+
+### Conflicts resolved (8 files)
+
+Six of the eight were additive collisions — both branches inserted different lines at the
+same place — and were resolved as unions after checking that every symbol from both sides
+is actually referenced in the already-merged bodies.
+
+| File | The collision | Resolution |
+| --- | --- | --- |
+| `extension/src/agent/loop.ts` | different imports on the same line | union — `DEFAULT_PRIVACY_MODE` (`loop.ts:231`) and `classifyPage` (`loop.ts:186`) are both used |
+| `extension/src/perception/visual/service.ts` | different imports on the same line | union — `OCR_MIN_ANALYSIS_EDGE` (`service.ts:248`) and the face-blur engine (`service.ts:324`) are both used |
+| `extension/src/sidepanel/AgentTask.tsx` | one side added `navigationPolicy`, the other `firewall` + the planner toggle | union — the auto-merged `runAgentLoop` call site references all three, so either side alone does not compile |
+| `package.json` | `onnxruntime-web` `1.29.0` vs `^1.29.0` | exact pin kept: ORT resolves wasm asset names at run time, so a silent minor bump can change which files must ship |
+| `eslint.config.js` | one side documented the `dist-firefox/**` ignore | comment kept |
+| `scripts/build-firefox.mjs` | `['"]` vs `["']` in one character class | identical semantics; the `['"]` form kept for consistency with the class beside it |
+| `package-lock.json` | both branches recorded `onnxruntime-web` (17 hunks) | took `integrate-f`'s lock, then `npm install --package-lock-only` — reported "up to date" against the resolved manifest, and the tree resolves `onnxruntime-web 1.29.0` |
+| `PROJECT_STATUS.md` | both branches appended a section numbered `9k` | both kept, renumbered to run monotonically: gate re-verification stays `9k`; face detection → `9l`, Gemini provider → `9m`, planner toggle → `9n`; the sections after §10 → `9o`, `9p`. Internal `§`-references updated |
+
+### Merge defect found and fixed: the ORT runtime shipped three times
+
+Neither branch conflicted here — both had independently solved "get the ONNX Runtime wasm
+into the package", and the merge kept both mechanisms. The first build of the merged tree
+produced a **161 MB `dist/`** against the <100 MB budget §9k recorded at 16 MB:
+
+| Copy | Source | Size | Consumer |
+| --- | --- | --- | --- |
+| `dist/ort/` | `copy-onnx-assets` plugin, from `node_modules` (all variants) | 80 MB | `faceBlur.ts` (`wasmPaths = getURL('ort/')`) |
+| `dist/models/ort-wasm-simd-threaded.jsep.*` | committed into `extension/public/models/`, copied verbatim by `publicDir` | 27.8 MB | `vision-onnx.ts` (`VISION_WASM_DIR = 'models/'`) |
+| `dist/assets/ort-wasm-simd-threaded.jsep-*.wasm` | emitted by the bundler following ORT's own `new URL(…)` reference | 27.8 MB | nothing — both consumers override `env.wasm.wasmPaths` before creating a session |
+
+Fixed by converging both ONNX consumers on the single generated directory:
+`VISION_WASM_DIR` is now `'ort/'`, and the two committed ORT binaries were deleted from
+`extension/public/models/` after confirming they are **byte-identical** (sha256) to
+`node_modules/onnxruntime-web/dist/`, so nothing unique was removed. `NOTICE.txt` was
+corrected accordingly — it claimed the ORT binaries sit "beside" the model. The 12 MB
+`icon-detect-640.onnx` stays committed: it has no npm source, and
+`tests/integration/vision-model.test.ts` reads it from that path.
+
+`dist/` is now **135 MB**. The remaining 27.8 MB bundler copy is unused at run time but
+removing it needs build surgery around ORT's static wasm reference, and even at ~107 MB
+the tree would still be over budget — see the limitations below.
+
+### E2E parallelism: one reproducible failure, root-caused
+
+`npm run e2e` on the merged tree failed `visual-perception.spec.ts:65` ("does not skip a
+large undescribed canvas") on **2 runs out of 2** at unbounded local parallelism, while the
+same test passed when its spec file ran alone. The signature — the Run-Visual-Check button
+present at click, then `element(s) not found` 10 s later — is the panel page being killed,
+the failure mode `1eb5849` already documented for CI ("parallel Chromium profiles crash
+pages"). The merge made it reach local runs too: every profile now loads BlazeFace, the
+OmniParser model and the Tesseract core.
+
+Measured: `--workers=2` with **no retries** → 24/24, at no wall-clock cost (38.2 s vs
+35.9 s — these tests are inference-bound, not scheduling-bound). `playwright.config.ts`
+therefore caps workers at 2 everywhere instead of CI-only. Retries stay CI-only so a local
+failure is never masked.
+
+### Verified gate results (merged tree, 2026-09-05)
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npm run typecheck` | ✅ pass (0 errors) |
+| Lint | `npm run lint` | ✅ pass (0 errors) — re-run with `dist-firefox/` present |
+| Unit + integration | `npm test` | ✅ **409 / 409** (40 files) |
+| Bench | `npm run bench` | ✅ 3 / 3 golden gates |
+| Build | `npm run build` | ✅ pass |
+| E2E | `npm run e2e` | ✅ **24 / 24** (10 specs) — at the capped worker count |
+| Firefox transform | `npm run build:firefox` | ✅ valid `dist-firefox/` |
+| Backend | `pytest -q` (backend/fastapi) | ✅ **20 / 20** |
+| Lightweight | `du -sh dist` | ⚠️ **135 MB** — OVER the <100 MB budget |
+
+The unit and backend totals are the union of both branches plus what each added after its
+own section was written (409 = 342 + `integrate-f`'s vision tests; 20 = 19 + the
+`test_plan.py` case `f70079d` added), so neither branch's recorded figure is now current.
+
+**Environment note (honest):** `pytest` in the ambient Python 3.14 env could not import
+`google.genai` (6 collection failures in `test_gemini_provider.py`, all
+`ModuleNotFoundError`), because `google-genai>=1.0` — added by §9m — was not installed.
+Ran in a throwaway venv OUTSIDE the repo (`~/.privagent-venv`) from
+`backend/fastapi/requirements.txt` → 20/20. Nothing was installed globally and no repo
+file was added, deliberately: a previous global install of these requirements upgraded
+`starlette`/`uvicorn` past what an unrelated `platformio` pins (noted in §9k).
+
+### Known limitations
+
+- **The <100 MB `dist` budget is breached (135 MB) and no unilateral fix is honest.** The
+  three ways down each cost something a merge resolution should not decide alone:
+  (a) drop the `asyncify` (25.7 MB) and `jspi` (16 MB) ORT variants → ~93 MB, but §9l's
+  defect #1 was a partial ORT copy failing at run time with a "dynamically imported
+  module" error, so this needs per-variant evidence, not reasoning;
+  (b) stop the bundler emitting its unused 27.8 MB copy → ~107 MB, still over;
+  (c) ship one ONNX feature instead of two. **Decision needed.**
+- Both ONNX models now load in the same panel context (BlazeFace pre-OCR, OmniParser for
+  region detection). Their combined peak memory has not been instrumented — the e2e
+  contention above is the only measurement, and it is a symptom, not a number.
+- The merge is resolved and staged but **not committed**; §9l/§9m/§9n's own limitations
+  (no live Gemini key in CI, no human Chrome click-through, Firefox not run in a real
+  browser) are unchanged and still open.
+
+---
+
 ## 11. Next milestone
 
-**M0–M7 are COMPLETE and verified** (M6 §9f, M7 §9g, telemetry dashboard §9h, visual
+**M0–M8 are COMPLETE and verified** (M6 §9f, M7 §9g, telemetry dashboard §9h, visual
 accuracy §9i, below-fold/navigation/repo organization §9j, gate re-verification §9k,
-M3 model gate §9m — decision: no detector model ships).
+M7.5 face detection + page classifier §9l, M8 Gemini Flash provider §9m and its side-panel
+toggle §9n, M3 model gate §9p — decision: no detector model ships). M7.5 and M8 arrived on
+this branch by merge; the gate figures that cover them all together are §9q's, measured on
+the merged tree.
 The two integration points left open by §9c are closed: the loop assembles a
 `RemoteAgentRequest` from `enforcePrivacy` output, and every outbound payload passes the
 fail-closed firewall (`extension/src/firewall/inspect.ts`).
@@ -1612,18 +1911,23 @@ coverage (§9j).
 The next milestone is **not started** and, per CONTRIBUTING.md §24, will not begin until
 explicitly requested. Remaining work, in rough order:
 
-1. **S4 — remote provider adapter:** Ollama (`qwen2.5vl:7b`) behind
+1. **`dist` size decision (§9q):** 135 MB against the <100 MB budget. Pick one of the
+   three routes §9q lists — the ORT-variant prune is the only one that gets under budget
+   on its own, and it needs a measured per-variant check, not an argument.
+2. **S4 — remote provider adapter:** Ollama (`qwen2.5vl:7b`) behind
    `AGENT_PROVIDER=remote` (the loud 501 seam in `backend/fastapi/app/agent.py`),
    JSON-schema-constrained actions, retries/timeouts; e2e against the live backend.
-   This is the single largest gap: today's planner is deterministic, not a model.
-2. **Loop hardening:** feed M3 visual/OCR findings into PER-STEP enforcement (they are
+   No longer the largest gap: §9m/§9n put a real model (Gemini Flash) on the planning
+   path, so this is now about a LOCAL model option rather than about having any model.
+3. **Loop hardening:** feed M3 visual/OCR findings into PER-STEP enforcement (they are
    scan-time only today, so a page whose sensitive data lives only in images is
    filled blank — §9f); add visual-only pages to the task-success metric.
-3. **Detection depth:** contextual/NLP sensitivity for free-text values with no label
+4. **Detection depth:** contextual/NLP sensitivity for free-text values with no label
    and no pattern (the documented boundary in `docs/benchmark.md`).
-4. **Platform/manual verification:** human Chrome click-through of live capture; Firefox
+5. **Platform/manual verification:** human Chrome click-through of live capture; Firefox
    run via `web-ext run --source-dir dist-firefox` (Playwright cannot load Firefox
-   extensions); CPU/GPU/RAM instrumentation for rubric #4.
-5. **Navigation settle:** replace the loop's fixed 600 ms post-NAVIGATE delay with a wait
+   extensions); CPU/GPU/RAM instrumentation for rubric #4 — now also the honest way to
+   answer §9q's uninstrumented two-model memory question.
+6. **Navigation settle:** replace the loop's fixed 600 ms post-NAVIGATE delay with a wait
    for the observed origin to change, removing the load-dependent `NO_PROGRESS` flake
-   documented in §9l.
+   documented in §9o.

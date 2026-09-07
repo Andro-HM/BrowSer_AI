@@ -34,8 +34,15 @@ import {
 
 /** Bundled model asset, relative to the extension root. */
 export const VISION_MODEL_ASSET = 'models/icon-detect-640.onnx';
-/** Directory holding the ONNX Runtime wasm binaries, relative to the extension root. */
-export const VISION_WASM_DIR = 'models/';
+/**
+ * Directory holding the ONNX Runtime wasm binaries, relative to the extension root.
+ *
+ * `dist/ort/` is populated at build time from `node_modules/onnxruntime-web/dist` by the
+ * `copy-onnx-assets` plugin (vite.config.ts) and is SHARED with the face-blur engine
+ * (`faceBlur.ts`) — one ORT runtime copy per package, not one per consumer. Before this
+ * was shared, two independent copy paths shipped the same 27.8 MB binary twice.
+ */
+export const VISION_WASM_DIR = 'ort/';
 /** Name reported in observations and diagnostics. */
 export const VISION_MODEL_NAME = 'omniparser-icon-detect-640';
 

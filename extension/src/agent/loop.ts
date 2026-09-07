@@ -24,6 +24,7 @@ import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
 import type { ActionBridge } from '../actions';
 import { detectLabeledValues, detectPII } from '../perception/pii';
 import { DEFAULT_PRIVACY_MODE } from '../policy/modes';
+import { classifyPage } from '../perception/visual/pageClassifier';
 import { enforcePrivacy } from '../sanitizer';
 import type { LocalVault } from '../vault';
 import type { PrivacyFirewall } from '../firewall';
@@ -178,9 +179,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
       ...detectPII(observed.pageText),
       ...detectLabeledValues(observed.pageText),
     ];
+    // M7.5 — page-type classification (payment/auth pages force a SANITIZE floor).
+    const visualContext = classifyPage(observed.structure, observed.pageText);
     const enforceStartedAt = performance.now();
     const enforcement = await enforcePrivacy({
-      signals: { entities, restricted: false },
+      signals: { entities, visualContext, restricted: false },
       pageText: observed.pageText,
       sessionId: options.sessionId,
       vault: options.vault,
