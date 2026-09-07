@@ -1,9 +1,12 @@
 # PrivAgent — PROJECT_STATUS
 
 _Last updated: 2026-09-05_
-_Author: `other-pr3` (M7.5 face detection + M8 Gemini Flash) merged into `integrate-f`
-(M3's real local vision model) — conflicts resolved, one merge defect found and fixed, all
-gates re-measured on the merged tree (§9q). Previous entries: M3 closed out with a REAL
+_Author: post-merge audit of the merged tree — <100 MB budget met (135 → 82 MB) on
+per-variant ORT evidence, both WebGPU and WASM/CPU paths re-probed in a real browser, and
+every shipped binary's license traced to a primary source (§9r). The merge itself:
+`other-pr3` (M7.5 face detection + M8 Gemini Flash) into `integrate-f` (M3's real local
+vision model) — conflicts resolved, one merge defect found and fixed, all gates
+re-measured (§9q). Previous entries: M3 closed out with a REAL
 local vision model (§00) — OmniParser `icon_detect` ONNX through onnxruntime-web, verified
 by real inference, not mocks; all gates re-verified from a clean tree (§9k); M6 audit gaps
 closed with an explicit task privacy contract (§9o). The merged work itself: on-device face
@@ -11,6 +14,49 @@ detection (§9l), the Gemini Flash provider on the backend seam (§9m) and its s
 planner toggle (§9n)._
 _Engineering rules: [CONTRIBUTING.md](CONTRIBUTING.md) (formerly `CLAUDE.md`; section
 numbers unchanged)._
+
+
+---
+
+## 0A. AUTHORITATIVE milestone map (read this before any section below)
+
+This file is an **append-only engineering log**: each `##` section records what was true
+when it was written, and is deliberately left as written. Sections were numbered as work
+landed (`00`, `9a`…`9r`), and some used a working label from the branch they came from —
+notably **"M7.5"**, which was one contributor's internal numbering for the face-detection
+work, not a project milestone.
+
+The table below is the **authoritative** M0–M11 definition. Where a historical section's
+label differs, the authoritative column governs; the historical label is preserved so the
+log stays readable and its claims stay attributable.
+
+| Authoritative | Meaning                                          | Primary modules                                            | Log sections                     |
+| ------------- | ------------------------------------------------ | ---------------------------------------------------------- | -------------------------------- |
+| **M0**        | Foundation, contracts, build/CI skeleton         | `types/contracts`, `manifest.ts`, `offscreen/` (scaffold)  | §6                               |
+| **M1**        | Capture + state + basic perception               | `background/`, `content/`, `perception/dom`                | §6, §7                           |
+| **M2**        | DOM perception + PII extraction                  | `perception/dom`, `perception/pii`                          | §8                               |
+| **M3**        | **Local visual perception**                      | `perception/visual` (regions/bands/raster/providers), `perception/ocr`, `perception/visual/faceBlur`, `pageClassifier` | §9, §9d, §9e, §9i, §00, §9p, §9l |
+| **M4**        | Privacy / PII policy decision                    | `policy/index.ts` (`decidePolicyReport`, `decidePolicy`)    | §9b                              |
+| **M5**        | Sanitization + vault                             | `sanitizer/enforce.ts` (`enforcePrivacy`), `vault/`         | §9c                              |
+| **M6**        | **Privacy Compiler + task-specific contract**    | `policy/modes.ts` (mode vocabulary + guard); contract assembled at `agent/loop.ts:286-294`, re-validated at `firewall/inspect.ts:isValidContract`, mirrored server-side by `backend/fastapi/app/agent.py:TaskPrivacyContract` | §9f, §9o |
+| **M7**        | **Sanitized server reasoning + action loop**     | `agent/loop.ts`, `agent/planner`, `actions/`, `backend/fastapi` | §9f, §9g, §9j, §9m, §9n      |
+| **M8**        | **Side panel + status + privacy visibility**     | `sidepanel/`                                                | §9d, §9h, §9n                    |
+| **M9**        | **Privacy firewall + network leakage testing**   | `firewall/`, `tests/unit/firewall-canary.test.ts`, `tests/integration/agent-leakage.test.ts` | §9f, §9o, §9s |
+| **M10**       | **SIH26171 benchmark + accuracy + performance**  | `benchmark/`, `docs/benchmark.md`                           | §9g, §9i, §9r                    |
+| **M11**       | **Final deliverable / hardening**                | build/size budget, license provenance, cross-browser        | §9q, §9r, §9s                    |
+
+**Two labels in the log that the authoritative scheme renames:**
+
+- **"M7.5" (face detection, §9l)** → belongs to **M3**. BlazeFace is a *specialized local
+  privacy/perception component* inside local visual perception. It does **not** replace the
+  general UI element detector (OmniParser `icon_detect`), and it is not a milestone of its
+  own.
+- **"M8 — Gemini Flash provider" (§9m/§9n)** → belongs to **M7** (sanitized server
+  reasoning). Authoritative M8 is the side panel. The Gemini provider is a planner behind
+  the existing `AGENT_PROVIDER` seam, on the server side of the privacy boundary.
+
+Historical section text still contains the old labels. That is intentional: rewriting it
+would misrepresent what was claimed and verified at the time (CONTRIBUTING.md §22).
 
 
 ---
@@ -101,6 +147,10 @@ ORT's own import graph. Pruning the unused copy would take `dist/` to ~53.9 MB. 
 the budget passes, so it was left alone rather than surgically deleting a Vite-emitted asset
 during a verification gate; it is a build-tuning task.
 
+_Superseded layout (paths, not conclusions): the `models/` ORT copy was removed by §9q — both
+ONNX consumers now load from `ort/` — and the variant set was pruned in §9r. The duplicate
+`assets/` copy called out above is still present and still inert. Current figures: §9r._
+
 **Laziness is proven by the build, not asserted:** removing the vision re-export from the
 `perception/visual` barrel eliminated rollup's `INEFFECTIVE_DYNAMIC_IMPORT` warnings, shrank the
 panel chunk 253.71 → 250.14 kB, and split `vision-onnx` (0.19 → 2.78 kB) and `pixel-stats`
@@ -140,7 +190,10 @@ export step and re-measuring everything. **Must be settled before public distrib
 
 - **WebGPU is not covered by `npm test`** — Node has no GPU adapter, so the automated suite runs
   the wasm EP only. WebGPU was measured by hand in headed Chromium (`gpu=true`, create 304 ms,
-  87–110 ms/region, exact parity with wasm). `executionProviders()` ordering is unit-tested.
+  87–110 ms/region, exact parity with wasm). What CI *does* cover is the attempt sequence:
+  `backendAttempts('webgpu')` → `['webgpu','wasm']`, with `executionProviders()` emitting a
+  SINGLE EP per attempt so the attempt that succeeds is the EP actually in use (a two-entry list
+  let ORT fall back silently, which made `observation.backend` a record of the request).
 - **WhatsApp Web itself was not driven.** An offline replica fixture was used instead, for
   account/ToS/privacy reasons. The replica reproduces the structure that matters (avatar column,
   message list, image attachment, composer) and is where the 8-region / 44-box numbers come from.
@@ -1455,10 +1508,14 @@ face and blacked it out before OCR** — `faceStats.facesDetected >= 1`,
 `facesBlurred >= 1`, `contentStatus: 'ok'`. Measured, not inferred.
 
 Three real defects were found and fixed while proving this:
-1. **Partial ORT runtime copy**: ORT 1.29 dynamically imports the glue by runtime-
-   selected name (e.g. `ort-wasm-simd-threaded.jsep.mjs`); shipping only the base pair
-   failed with a "dynamically imported module" backend error. The build now copies
-   EVERY `ort-wasm*.{mjs,wasm}` variant.
+1. **Partial ORT runtime copy**: ORT 1.29 dynamically imports the glue by name
+   (`ort-wasm-simd-threaded.jsep.mjs`) as a sibling module of the `.wasm`; shipping only
+   the base pair failed with a "dynamically imported module" backend error. The fix at
+   the time was to copy EVERY `ort-wasm*.{mjs,wasm}` variant. **That remedy was wider
+   than the diagnosis required and has since been narrowed — see §9r**: the failure was
+   shipping the WRONG pair (base instead of jsep), not too FEW pairs. The imported entry
+   point hard-codes exactly the jsep pair and cannot request the others, so the build now
+   copies that pair only, and fails loudly if ORT renames it.
 2. **Input-name matcher**: the model's image input is named `image`, not `input` — the
    keyword matcher silently missed it and returned zero faces. `pickImageInput` now
    accepts both spellings.
@@ -1831,7 +1888,8 @@ corrected accordingly — it claimed the ORT binaries sit "beside" the model. Th
 
 `dist/` is now **135 MB**. The remaining 27.8 MB bundler copy is unused at run time but
 removing it needs build surgery around ORT's static wasm reference, and even at ~107 MB
-the tree would still be over budget — see the limitations below.
+the tree would still be over budget — see the limitations below. _(Route (a) below was
+subsequently measured and taken: **82 MB**, §9r.)_
 
 ### E2E parallelism: one reproducible failure, root-caused
 
@@ -1860,7 +1918,7 @@ failure is never masked.
 | E2E | `npm run e2e` | ✅ **24 / 24** (10 specs) — at the capped worker count |
 | Firefox transform | `npm run build:firefox` | ✅ valid `dist-firefox/` |
 | Backend | `pytest -q` (backend/fastapi) | ✅ **20 / 20** |
-| Lightweight | `du -sh dist` | ⚠️ **135 MB** — OVER the <100 MB budget |
+| Lightweight | `du -sh dist` | ⚠️ **135 MB** — OVER the <100 MB budget (resolved in §9r: **82 MB**) |
 
 The unit and backend totals are the union of both branches plus what each added after its
 own section was written (409 = 342 + `integrate-f`'s vision tests; 20 = 19 + the
@@ -1883,12 +1941,171 @@ file was added, deliberately: a previous global install of these requirements up
   module" error, so this needs per-variant evidence, not reasoning;
   (b) stop the bundler emitting its unused 27.8 MB copy → ~107 MB, still over;
   (c) ship one ONNX feature instead of two. **Decision needed.**
+  → **CLOSED by §9r**: route (a) was taken after gathering exactly the per-variant
+  evidence this bullet demanded (three independent derivations plus a live-browser fetch
+  observation). `dist/` is **82 MB** with both execution paths re-verified in a real
+  browser. Routes (b) and (c) were not needed and nothing was dropped from the product.
 - Both ONNX models now load in the same panel context (BlazeFace pre-OCR, OmniParser for
   region detection). Their combined peak memory has not been instrumented — the e2e
   contention above is the only measurement, and it is a symptom, not a number.
 - The merge is resolved and staged but **not committed**; §9l/§9m/§9n's own limitations
   (no live Gemini key in CI, no human Chrome click-through, Firefox not run in a real
   browser) are unchanged and still open.
+
+---
+
+## 9r. Post-merge audit — size budget met, licenses traced (2026-09-05)
+
+_A full audit of the merged tree (§9q) against the architecture rules, the <100 MB budget
+and the provenance of every shipped binary. **One source file changed:** `vite.config.ts`.
+Everything else in this section is measurement or documentation. The merge is still
+resolved-and-staged, still not committed._
+
+### Size: 135 MB → **82 MB** (PASS, <100 MB)
+
+The §9q limitation demanded "per-variant evidence, not reasoning" before pruning ORT
+variants. Three independent derivations were gathered, and they agree:
+
+1. **Package exports.** A browser `import 'onnxruntime-web'` resolves to
+   `dist/ort.bundle.min.mjs`. String-extracting that file yields exactly two ORT asset
+   names — `ort-wasm-simd-threaded.jsep.{wasm,mjs}` — and no variant-selection logic. The
+   `asyncify` / `jspi` / base binaries are referenced only from the `ort.jspi.*` and
+   `ort.all.*` entry points, which nothing in this repo imports (the only
+   `onnxruntime-web` importers are `providers/vision-onnx.ts` and `faceBlur.ts`, both bare
+   specifiers).
+2. **Bundler agreement.** Rolldown follows that same file's
+   `new URL('ort-wasm-simd-threaded.jsep.wasm', import.meta.url)` and emits ONLY the jsep
+   variant into `dist/assets/` — never asyncify, jspi or base.
+3. **Live browser observation.** A Chromium probe over the built extension, importing the
+   emitted `assets/ort.bundle.min-*.js` chunk via `chrome.runtime.getURL`, fetched only
+   those two files while creating sessions for BOTH models.
+
+| ORT variant in `node_modules` | Size | Shipped? | Why |
+| --- | --- | --- | --- |
+| `ort-wasm-simd-threaded.jsep.wasm` | 26.51 MB | **YES** | the only `.wasm` the imported entry point names; JSEP *is* the WebGPU EP **and** the same artifact runs the wasm/CPU fallback |
+| `ort-wasm-simd-threaded.jsep.mjs` | glue | **YES** | dynamically imported as a sibling module — dropping it is exactly §9l defect #1 |
+| `ort-wasm-simd-threaded.asyncify.wasm` | 24.56 MB | no | unreachable: named only by `ort.all.*` |
+| `ort-wasm-simd-threaded.jspi.wasm` | 15.28 MB | no | unreachable: named only by `ort.jspi.*` |
+| `ort-wasm-simd-threaded.wasm` (base) | 13.32 MB | no | unreachable from this entry point; shipping *this instead of* jsep is what broke in §9l |
+
+`vite.config.ts` now copies an explicit two-file allowlist and **throws at build time** if
+`onnxruntime-web` ever stops shipping those names, so an ORT upgrade that renames the
+variant breaks the build rather than the extension. −53.16 MB → `dist/` = **82 MB**.
+
+Nothing was removed from the product to get there: no WebGPU, no WASM/CPU fallback, no
+Firefox support, no model, no feature. Routes (b) and (c) from §9q were not needed.
+
+**Final `dist/` composition (82 MB):**
+
+| Directory | Size | Contents |
+| --- | --- | --- |
+| `dist/assets` | 28 MB | app chunks (panel 250 kB, `ort.bundle.min-*.js` 402 kB) **+ the 27.8 MB bundler-emitted jsep duplicate** — still inert, still not fetched (both consumers set `wasmPaths` first). Removing it needs surgery around ORT's static `new URL()` and is no longer needed for the budget |
+| `dist/ort` | 27 MB | the jsep pair — the copy both ONNX consumers actually load |
+| `dist/ocr` | 16 MB | Tesseract worker + **both** wasm cores + `eng.traineddata.gz` |
+| `dist/models` | 13 MB | `icon-detect-640.onnx` 11.68 MB + `blazeface.onnx` 0.54 MB |
+
+**Both Tesseract cores are correctly retained — this is the opposite of the ORT case.**
+`worker.min.js` picks the core filename at run time from a real capability probe
+(`WebAssembly.validate` on a SIMD module →
+`"/tesseract-core-simd-lstm.wasm.js"` : `"/tesseract-core-lstm.wasm.js"`), and
+`tesseract.ts` passes only the core DIRECTORY, so the worker resolves the name itself.
+Both are reachable; dropping the non-SIMD core would break every non-SIMD environment.
+The pruned ORT variants were unreachable — reachability, not size, was the criterion.
+
+### Both execution paths re-verified in a real browser (Rule 13)
+
+Pruning to one binary raises exactly one question worth answering empirically: does the
+single artifact still serve WebGPU *and* the CPU fallback? Measured in headless Chromium
+over the built extension, not argued:
+
+| Probe | Result |
+| --- | --- |
+| WebGPU available | `hasWebGPU: true`, `adapter: "available"` |
+| OmniParser, probe passed `['webgpu','wasm']` | `omniparser_webgpu: "ok outputs=1"` |
+| OmniParser, probe passed `['wasm']` | `omniparser_wasm: "ok outputs=1"` |
+| BlazeFace session create on wasm | created (inference itself needs the graph's `conf_threshold` feed, which the probe omitted — the real path is covered green by `face-detection.spec.ts`) |
+
+**What that first OmniParser row does and does not prove.** It proves the single artifact loads
+and produces an output tensor when WebGPU is requested. It does **not** prove the graph ran on
+the GPU: a two-entry EP list is exactly the case where ORT may fall back to wasm internally and
+report nothing about it. The provider has since been changed to attempt **one EP per session**
+(`backendAttempts` → `['webgpu','wasm']`, `executionProviders` → a single entry each), so the
+successful attempt now *is* the EP in use and a refusal surfaces as `VISION_BACKEND_REJECTED`.
+The row above is kept as the historical probe result, read with that caveat; the EP the detector
+actually runs on is now reported per run in `benchmark/reports/visual-performance.md`.
+
+### License provenance — every shipped binary traced to a primary source
+
+Written up in full in `extension/public/models/NOTICE.txt` (rewritten this session from
+one artifact to all four). Summary:
+
+| Artifact | Direct source of the shipped bytes | License | Redistribution |
+| --- | --- | --- | --- |
+| `icon-detect-640.onnx` | `onnx-community/OmniParser-icon_detect_640x640` @ `799bd041b5d053ed44651c2237ced04d8fdb2777` — **declares no license** | **AGPL-3.0**, from `microsoft/OmniParser` `icon_detect/` | ⚠️ **obligation undischarged** |
+| `blazeface.onnx` | byte-identical (sha256 `564740c5…`) to `manthi4/End-to-end-BlazeFace-Onnx` — **`license: null`** | model is Apache-2.0 upstream (MediaPipe); **these bytes carry no grant** | ⚠️ **unresolved; cheap fix available** |
+| `ort/ort-wasm-simd-threaded.jsep.*` | `onnxruntime-web` 1.29.0 | **MIT** | ✅ fine |
+| `ocr/*` | `tesseract.js` 6.0.1 + `tesseract.js-core` 6.1.2 + tessdata `eng` | **Apache-2.0** | ✅ fine |
+
+Two findings worth stating plainly:
+
+- **The AGPL is intrinsic, not a labelling error.** `icon_detect` is a fine-tuned
+  Ultralytics YOLOv8 and `ultralytics/ultralytics` is itself AGPL-3.0. The model card body
+  says verbatim "icon_detect model is under AGPL license" and `icon_detect/LICENSE` is the
+  complete unmodified AGPL v3. The repo-level frontmatter `license: mit` is not a
+  contradiction to resolve — the card scopes licenses per directory (BLIP2/Florence
+  captioners *are* MIT). A re-export grants no rights the weights lack, which is why the
+  unlicensed onnx-community intermediary changes nothing. Consequence: any permissive
+  replacement must be checked at the FRAMEWORK level — a "YOLOv8"/"YOLO11"/"YOLOv5"
+  derivative inherits Ultralytics AGPL whatever its model card advertises, so candidates
+  previously recorded as "MIT" (e.g. `laywens/uitag-yolo11s-ui-detect-v1`) are NOT safe on
+  that basis. A genuine alternative needs a non-Ultralytics architecture (DETR/RT-DETR, or
+  an Apache-2.0 YOLOS variant — and §9p already measured YOLOS-tiny and rejected it on
+  accuracy). This is a licensing decision for the project, not a file swap.
+- **BlazeFace is the cheap one.** `scripts/fetch-blazeface.sh` already lists MIT-licensed
+  `PINTO0309/PINTO_model_zoo` as its PRIMARY source; the committed bytes came from the
+  FALLBACK. Re-fetching from the primary and replacing the file resolves it with no code
+  change, provided the `[1,3,128,128]` input and graph-baked threshold/NMS contract hold.
+
+`extension/src/perception/visual/models/README.md` claimed `blazeface.onnx` is "NOT
+committed — fetch via `scripts/fetch-blazeface.sh`". It **is** committed (staged `A` in
+this merge), which turns a developer-fetch into redistribution; corrected.
+
+### Rules and flow re-verified by tracing execution (not file existence)
+
+DOM-first gate → visual only on insufficiency (`service.ts:174`); bounded multi-region
+with below-fold bands; OmniParser remains the GENERAL UI detector and BlazeFace a
+SPECIALIZED pre-OCR complement — both run over the same raster in a fixed order
+(`service.ts:316` vision → `:326` face blur → `:336` OCR/content analyzer), so neither
+replaced the other in the merge; Tesseract still owns text; M6 decides what crosses; the
+firewall is the sole egress gate; Chromium and Firefox both build.
+
+**One architectural gap, pre-existing and already on the roadmap:** M3 visual findings
+reach M4/M5 on the **scan** path (`App.tsx:113` passes `visual` into `PolicySignals`) but
+not on the **agent** path (`loop.ts:186` passes `entities` + `visualContext` only, and
+`AgentLoopOptions` has no visual dependency). No raw data escapes either way — no pixels
+are ever sent — but during agent execution a page whose only PII is painted inside an
+image is less protected. This is item 3 of §11 ("Loop hardening"), recorded since §9f, and
+the merge neither caused nor worsened it. Left as-is deliberately: wiring perception into
+the loop is a feature change, not an audit fix.
+
+### Gates (re-measured after the pruning, 2026-09-05)
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npm run typecheck` | ✅ pass |
+| Lint | `npm run lint` | ✅ pass |
+| Unit + integration | `npm test` | ✅ **409 / 409** (40 files) |
+| Bench | `npm run bench` | ✅ 3 / 3 golden gates |
+| Build | `npm run build` | ✅ pass |
+| E2E | `npm run e2e` | ✅ **24 / 24** in 28.4 s — incl. real-face detect+blur, both visual-accuracy canvas specs, undescribed-canvas OmniParser |
+| Firefox transform | `npm run build:firefox` | ✅ valid `dist-firefox/` (82 MB), gecko id + `sidebar_action` correct |
+| Backend | `pytest -q` (throwaway venv, as §9q) | ✅ **20 / 20** |
+| Lightweight | `du -sh dist` | ✅ **82 MB** (<100 MB) |
+
+Conflict-marker sweep across the whole repo: clean. The single `=======` hit is the
+heading underline at `NOTICE.txt:2`. No unmerged paths; no code references either ORT file
+deleted in §9q. Remaining stale references were documentation-only and are fixed here
+(`PROJECT_STATUS.md` §00.5/§9l/§9q pointers) or noted for docs (`docs/m3-visual-perception.md:206`).
 
 ---
 
@@ -1911,9 +2128,15 @@ coverage (§9j).
 The next milestone is **not started** and, per CONTRIBUTING.md §24, will not begin until
 explicitly requested. Remaining work, in rough order:
 
-1. **`dist` size decision (§9q):** 135 MB against the <100 MB budget. Pick one of the
-   three routes §9q lists — the ORT-variant prune is the only one that gets under budget
-   on its own, and it needs a measured per-variant check, not an argument.
+1. **Model licensing decision (§9r)** — now the top item, and it is a project decision, not
+   an engineering task. `icon-detect-640.onnx` is AGPL-3.0 by lineage (fine-tuned
+   Ultralytics YOLOv8) and this repo declares no license. Either accept AGPL-3.0 for the
+   distribution, or replace the detector with a non-Ultralytics architecture — checked at
+   the framework level, since YOLO-family model cards advertising MIT are unreliable
+   (§9r), and §9p already rejected YOLOS-tiny on measured accuracy. Separately and much
+   cheaper: re-fetch `blazeface.onnx` from the MIT PINTO source that
+   `scripts/fetch-blazeface.sh` already lists as primary, replacing bytes that currently
+   come from an unlicensed mirror.
 2. **S4 — remote provider adapter:** Ollama (`qwen2.5vl:7b`) behind
    `AGENT_PROVIDER=remote` (the loud 501 seam in `backend/fastapi/app/agent.py`),
    JSON-schema-constrained actions, retries/timeouts; e2e against the live backend.
