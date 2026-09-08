@@ -1,7 +1,7 @@
 # PrivAgent — PROJECT_STATUS
 
-_Last updated: 2026-08-30_
-_Author: Real local OCR (Tesseract.js) integrated — visual content pass live_.
+_Last updated: 2026-09-08_
+_Status: M0–M9 complete — extension, perception (Tesseract OCR, BlazeFace, OmniParser vision), policy, sanitization, agent loop, backend planners (deterministic/Gemini/Ollama), privacy hardening; AGPL-3.0 Combined Work (bundled icon-detect-640.onnx)._
 _Engineering rules: [CONTRIBUTING.md](CONTRIBUTING.md) (formerly `CLAUDE.md`; section
 numbers unchanged)._
 
