@@ -27,7 +27,12 @@ export type OcrTraceStage =
   | 'FACE_BLUR_DONE'
   | 'FACE_BLUR_UNAVAILABLE'
   | 'PRIVACY_FINDINGS'
-  | 'UI_FINDINGS';
+  | 'UI_FINDINGS'
+  | 'VISION_MODEL_READY'
+  | 'VISION_MODEL_UNAVAILABLE'
+  | 'VISION_INFERENCE_FAILED'
+  | 'VISION_IMAGE_TOO_SMALL'
+  | 'VISION_ELEMENTS';
 
 /** Only non-content scalars are loggable — enforced by the type, not by convention. */
 export type SafeDetail = Record<string, number | boolean | string | undefined>;
@@ -35,7 +40,12 @@ export type SafeDetail = Record<string, number | boolean | string | undefined>;
 const PREFIX = '[PrivAgent OCR]';
 
 /** Stages that represent a soft failure/degradation → warn (never error). */
-const WARN_STAGES: ReadonlySet<OcrTraceStage> = new Set<OcrTraceStage>(['CAPTURE_FAILED']);
+const WARN_STAGES: ReadonlySet<OcrTraceStage> = new Set<OcrTraceStage>([
+  'CAPTURE_FAILED',
+  'VISION_MODEL_UNAVAILABLE',
+  'VISION_INFERENCE_FAILED',
+  'VISION_IMAGE_TOO_SMALL',
+]);
 
 /**
  * Emit one pipeline stage with safe metadata. `detail` is typed to reject objects,

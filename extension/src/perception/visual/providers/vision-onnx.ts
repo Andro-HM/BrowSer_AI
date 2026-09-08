@@ -215,6 +215,22 @@ export function createVisionOnnxProvider(options: VisionOnnxOptions = {}): Visua
       // the weaker analysis was willing to assert, so report nothing.
       if (base.length === 0) return base;
 
+      // 640-edge guard: the icon-detect-640 graph has a static 640x640 input and goes
+      // silent on smaller rasters (measured: 33 elements at 640, 0 at 192). Fall back
+      // to the heuristic result with a warning — never return empty silently.
+      // NOTE: `source` stays 'vision' (the `VisualProvider` type admits only
+      // 'ocr' | 'vision'); the heuristic origin is recorded in the trace instead.
+      if (raster.width < VISION_INPUT_EDGE || raster.height < VISION_INPUT_EDGE) {
+        ocrTrace('VISION_IMAGE_TOO_SMALL', {
+          regionId: region.id,
+          width: raster.width,
+          height: raster.height,
+          need: VISION_INPUT_EDGE,
+          fallback: 'heuristic',
+        });
+        return base;
+      }
+
       let elements: VisualElementBox[] | null = null;
       try {
         elements = await detect(raster, region, backend);

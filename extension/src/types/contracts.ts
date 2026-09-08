@@ -83,7 +83,32 @@ export interface DomVisualSnapshot {
 export type VisualObservationLabel =
   | 'text_like_content'
   | 'graphic_content'
-  | 'low_information';
+  | 'low_information'
+  /**
+   * A local vision MODEL localized ≥1 discrete UI element inside the region.
+   * Emitted only by a real detector (never by pixel heuristics), and only as a
+   * statement about STRUCTURE — "there are separable elements here" — never about
+   * what they contain or whether they are sensitive.
+   */
+  | 'ui_elements';
+
+/**
+ * One element a local vision model localized inside a region.
+ *
+ * Geometry + confidence ONLY, in the same viewport CSS-pixel space as
+ * `VisualRegion`, so it is safe to surface upward: a rectangle is not content.
+ * There is deliberately no `label` field — the bundled detector has a single
+ * "interactable element" class, and inventing finer classes from it would be
+ * fabrication (CONTRIBUTING.md §22).
+ */
+export interface VisualElementBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Detector score, 0–1, as reported by the model. Never rescaled upward. */
+  confidence: number;
+}
 
 export interface VisualObservation {
   type: 'visual_observation';
@@ -93,6 +118,16 @@ export interface VisualObservation {
   confidence: number;
   /** Always true: the observation was produced entirely on-device. */
   local: true;
+  /**
+   * Sub-region element geometry from a local vision model, when one is registered.
+   * ABSENT (not empty) when no model ran — the pipeline never reports zero elements
+   * as if a detector had looked and found none.
+   */
+  elements?: VisualElementBox[];
+  /** Name of the model that produced `elements`, e.g. `omniparser-icon-detect`. */
+  model?: string;
+  /** Execution provider the model actually ran on for this region. */
+  backend?: 'webgpu' | 'wasm' | 'cpu';
 }
 
 export type VisualPerceptionStatus =

@@ -248,3 +248,8 @@ exercised by hand in Chrome.
   changes ids and forfeits cache reuse. Acceptable for now; revisit if it costs measurable work.
 - **Concurrency is rejected, not queued.** An overlapping `run()` returns `running` rather than
   waiting.
+
+## License note
+icon-detect-640.onnx is derived from Microsoft OmniParser
+(AGPL-3.0). Bundling this asset makes the extension subject
+to AGPL-3.0 terms. See icon_detect/LICENSE.

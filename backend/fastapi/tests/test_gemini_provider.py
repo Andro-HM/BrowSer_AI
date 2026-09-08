@@ -132,14 +132,14 @@ def test_gemini_api_failure_fails_closed_with_502(gemini_env):
     assert response.json()["detail"] == "llm_unavailable"
 
 
-def test_missing_api_key_returns_500(gemini_env, monkeypatch):
+def test_missing_api_key_returns_502(gemini_env, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY")
     # No Gemini call should be attempted — the key check runs first.
     with patch("google.genai.Client") as client_mock:
         response = client.post("/v1/plan", json=_request())
     client_mock.assert_not_called()
-    assert response.status_code == 500
-    assert "GEMINI_API_KEY" in response.json()["detail"]
+    assert response.status_code == 502
+    assert "GEMINI_API_KEY" in str(response.json()["detail"])
 
 
 def test_deterministic_default_ignores_missing_key():

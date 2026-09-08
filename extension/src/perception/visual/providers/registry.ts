@@ -15,11 +15,39 @@ import type { VisualProvider, VisualProviderFactory } from '../types';
 let factory: VisualProviderFactory | null = null;
 let instance: VisualProvider | null = null;
 let pending: Promise<VisualProvider> | null = null;
+let analysisEdge: number | null = null;
+
+/** Declared, model-load-free requirements of a registered provider. */
+export interface VisualProviderRegistration {
+  /**
+   * Longest raster edge this provider needs to work at all, in pixels.
+   *
+   * Declared at REGISTRATION time, deliberately: the service must size the raster
+   * before it decides to load a model, so asking the provider instance would force
+   * the very eager load this registry exists to avoid.
+   */
+  analysisEdge?: number;
+}
 
 /** Replace the active provider factory. Disposes any already-loaded provider. */
-export function registerVisualProvider(next: VisualProviderFactory): void {
+export function registerVisualProvider(
+  next: VisualProviderFactory,
+  registration: VisualProviderRegistration = {},
+): void {
   void disposeVisualProvider();
   factory = next;
+  analysisEdge =
+    registration.analysisEdge !== undefined && registration.analysisEdge > 0
+      ? Math.floor(registration.analysisEdge)
+      : null;
+}
+
+/**
+ * Raster edge the registered provider declared, or `null` for the default provider.
+ * `null` means "no opinion" and leaves the service's own budget untouched.
+ */
+export function visualProviderAnalysisEdge(): number | null {
+  return analysisEdge;
 }
 
 /** Default backend: dependency-free pixel statistics, imported on first real use. */
@@ -66,4 +94,5 @@ export function isVisualProviderLoaded(): boolean {
 export async function resetVisualProviders(): Promise<void> {
   await disposeVisualProvider();
   factory = null;
+  analysisEdge = null;
 }

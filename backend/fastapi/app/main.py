@@ -29,7 +29,21 @@ def plan(request: PlanRequest) -> dict:
     and rejects any raw email/phone/card that still shows up.
     """
     # PRE-SCAN (inbound): raw PII must never reach ANY provider.
-    if scan_pii(request.taskObjective, request.sanitizedVisibleText):
+    # Covers the top-level text plus every free-text struct field that can carry
+    # a raw value past the sanitizer: alias bindings and all node strings
+    # (selector/label/name). NOTE: PlanRequest has no `pageContext`/`reason`
+    # fields — the LLM result `reason` is covered by the provider POST-SCAN.
+    struct_texts: list[str] = []
+    for binding in request.aliases:
+        struct_texts.append(binding.alias)
+        struct_texts.append(binding.category)
+    for node in request.sanitizedPageStructure:
+        struct_texts.append(node.selector)
+        if node.label is not None:
+            struct_texts.append(node.label)
+        if node.name is not None:
+            struct_texts.append(node.name)
+    if scan_pii(request.taskObjective, request.sanitizedVisibleText, *struct_texts):
         raise HTTPException(status_code=422, detail="Raw PII detected in outbound request")
 
     try:
