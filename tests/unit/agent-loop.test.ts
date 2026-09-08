@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runAgentLoop, toSanitizedNodes } from '../../extension/src/agent/loop';
 import { createDeterministicPlanner } from '../../extension/src/agent/planner';
 import { createActionBridge } from '../../extension/src/actions';
@@ -83,8 +83,9 @@ describe('agent loop (deterministic, in-extension)', () => {
       expect(json).not.toContain(CANARY_EMAIL);
       expect(json).not.toContain(CANARY_PHONE);
     }
-    // The vault (local, in memory) holds the alias→value mapping.
-    expect(await vault.resolve('USER_EMAIL_1')).toBe(CANARY_EMAIL);
+    // The vault held the alias→value mapping DURING the run (executor got reals)…
+    // …but the mapping is wiped after the run — values must not persist tasks.
+    expect(await vault.resolve('USER_EMAIL_1')).toBeUndefined();
   });
 
   it('never exposes the resolved value in step records', async () => {
@@ -358,6 +359,39 @@ describe('agent loop (deterministic, in-extension)', () => {
     const page = fakePage();
     const { run } = buildLoop(page, '   ');
     expect((await run()).status).toBe('error');
+  });
+});
+
+describe('vault wipe after every run', () => {
+  it('wipes alias mappings when the run completes', async () => {
+    const page = fakePage();
+    const { run, vault } = buildLoop(page, 'fill the form with my details and submit');
+    const spy = vi.spyOn(vault, 'clearSession');
+
+    const result = await run();
+
+    expect(result.status).toBe('completed');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('test-session');
+    expect(await vault.resolve('USER_EMAIL_1')).toBeUndefined();
+    expect(await vault.resolve('USER_PHONE_1')).toBeUndefined();
+  });
+
+  it('wipes alias mappings when the run fails', async () => {
+    const page = fakePage();
+    const inner = page.scan;
+    page.scan = async () => ({
+      ...(await inner()),
+      pageText: 'password: hunter2hunter2',
+    });
+    const { run, vault } = buildLoop(page, 'fill the form');
+    const spy = vi.spyOn(vault, 'clearSession');
+
+    const result = await run();
+
+    expect(result.status).toBe('blocked');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('test-session');
   });
 });
 

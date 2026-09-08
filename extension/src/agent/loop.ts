@@ -132,8 +132,18 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
   const stage = { scanMs: 0, enforceMs: 0, planMs: 0, executeMs: 0 };
   const startedAt = performance.now();
 
-  const stop = (status: AgentRunStatus, reason?: string): AgentRunResult => {
+  // Every terminal path funnels through stop() — completed, blocked, error, or
+  // budget-exhausted. The wipe below therefore runs after EVERY run (success or
+  // failure) and never mid-run: no code after a stop() call touches the vault.
+  const stop = async (status: AgentRunStatus, reason?: string): Promise<AgentRunResult> => {
     options.onEvent?.({ type: 'STOP', code: reason ?? status, index: steps.length });
+    // Privacy: wipe alias↔value mappings after every run — values must not
+    // persist between tasks. Fail-safe: a wipe failure never changes the result.
+    try {
+      await options.vault.clearSession?.(options.sessionId);
+    } catch {
+      // Best-effort cleanup; the mappings die with the context regardless.
+    }
     return {
       status,
       reason,
