@@ -76,8 +76,19 @@ def to_plan_action(action: PlannedAction) -> PlanAction:
 
 
 def post_scan(result: PlanResult) -> None:
-    """Scan the model's own output for raw PII; raise `LLMPIILeakError` on a leak."""
-    leaked = scan_pii(result.reason, result.action.value if result.action else None)
+    """Scan the model's own output for raw PII; raise `LLMPIILeakError` on a leak.
+
+    Covers every model-controlled string that reaches the response: `reason`,
+    `value` (TYPE/SELECT payload), `selector` (CSS selectors can embed raw
+    values), and `url` (NAVIGATE targets can carry query-string PII).
+    """
+    action = result.action
+    leaked = scan_pii(
+        result.reason,
+        action.value if action else None,
+        action.selector if action else None,
+        action.url if action else None,
+    )
     if leaked:
         raise LLMPIILeakError()
 

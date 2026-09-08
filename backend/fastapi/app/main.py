@@ -43,6 +43,9 @@ def plan(request: PlanRequest) -> dict:
             struct_texts.append(node.label)
         if node.name is not None:
             struct_texts.append(node.name)
+    # pageOrigin is a URL: query strings can smuggle raw PII (?email=user@x.com).
+    if request.pageOrigin is not None:
+        struct_texts.append(request.pageOrigin)
     if scan_pii(request.taskObjective, request.sanitizedVisibleText, *struct_texts):
         raise HTTPException(status_code=422, detail="Raw PII detected in outbound request")
 
