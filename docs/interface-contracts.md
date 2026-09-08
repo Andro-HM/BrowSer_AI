@@ -1,9 +1,10 @@
-# PrivAgent — Interface Contracts (preliminary)
+# PrivAgent — Interface Contracts
 
-_Status: **preliminary**, pre-implementation (M0 preflight). Types shown are contract sketches, not committed code._
-_Grounded in blueprint §7, §9, §14. No LLM provider is chosen here (deferred with justification — see §2)._
-
-> Design/documentation only. No feature logic implemented.
+_Status: **implemented**. This document mirrors the committed code: request schema =
+`backend/fastapi/app/agent.py` (`PlanRequest`), firewall shape =
+`extension/src/firewall/inspect.ts`, extension type =
+`extension/src/types/contracts.ts` (`RemoteAgentRequest`)._
+_Grounded in blueprint §7, §9, §14._
 
 ---
 
@@ -25,23 +26,64 @@ DETECTED ──▶ ALLOCATED ──▶ IN_USE (remote) ──▶ RESOLVED (local
 
 **Alias invariants** (PDF §7): stable within a session/task · opaque (encodes no part of the secret) · typed (`USER_EMAIL_1` not `VALUE_7`) · unique · non-reversible by the remote agent · resolvable **only** locally · mapping never placed in prompts, logs, telemetry, or benchmark exports.
 
-## 2. Remote AI input contract (provider-agnostic)
+## 2. Remote AI input contract (implemented)
 
-The remote agent receives a single **sanitized** request object. The provider (which LLM/API) is **deliberately not chosen yet** — justification: the blueprint (§8) recommends starting with a _deterministic action planner or simple JSON-emitting agent_ to make the demo reproducible and reduce debugging; the privacy boundary is provider-independent; and CONTRIBUTING.md §3 forbids inventing model capabilities. A thin **provider adapter** will map this contract to a concrete API when one is chosen (target ≈ M6).
+The remote agent receives a single **sanitized** request object (`POST /v1/plan`,
+alias `POST /v1/act`). Field table — exactly as implemented in
+`backend/fastapi/app/agent.py`:
 
-```ts
-// sketch — subject to refinement
-type RemoteAgentRequest = {
-  taskObjective: string;
-  sanitizedPageStructure: SanitizedNode[]; // roles/labels/input types; values aliased or removed
-  sanitizedVisibleText: string; // aliased
-  aliases: { alias: string; category: string }[]; // TYPE ONLY — never the value, never the mapping
-  availableActions: AgentActionKind[]; // CLICK | TYPE | SELECT | SCROLL | NAVIGATE
-  policy: { privacyMode: string; navigationAllowlist: string[] };
-};
+| Field | Type | Required | Constraints |
+| ----- | ---- | -------- | ----------- |
+| `taskObjective` | string | yes | 1–2000 chars |
+| `pageOrigin` | string \| null | no (default `null`) | origin-only when present |
+| `sanitizedPageStructure` | `SanitizedNode[]` | yes | ≤ 500 nodes |
+| `sanitizedVisibleText` | string | yes | ≤ 100 000 chars, aliased |
+| `aliases` | `{ alias, category }[]` | yes | ≤ 100 bindings, TYPE ONLY — never the value, never the mapping |
+| `availableActions` | `AgentActionKind[]` | yes | `CLICK \| TYPE \| SELECT \| SCROLL \| NAVIGATE` |
+| `provider` | `deterministic \| gemini \| ollama` \| null | no (default `null` → `AGENT_PROVIDER` env → `deterministic`) | planner hint only |
+| `policy` | `{ privacyMode, navigationAllowlist }` | yes | `privacyMode`: only `"strict"` accepted (anything else → 422); `navigationAllowlist: string[]` (default `[]` = navigation denied) |
+
+`SanitizedNode`: `tag: input \| textarea \| select \| button` (required) ·
+`selector: string` 1–512 chars (required) · `inputType?`, `label?`, `name?: string` ·
+`filled: boolean`, `disabled: boolean` (required) · `belowFold?: boolean`.
+`AliasBinding`: `alias` must match `^USER_[A-Z]+_\d+$` (required) · `category: string` (required).
+
+There is no `pageContext`/`nodes` shape — clients must send the fields above.
+
+**Example request** (deterministic provider; this exact payload is asserted by
+`backend/fastapi/tests/test_contract.py`):
+
+```json
+{
+  "taskObjective": "fill the form with my details and submit",
+  "pageOrigin": null,
+  "sanitizedPageStructure": [
+    {
+      "tag": "input",
+      "selector": "#email",
+      "inputType": "email",
+      "label": "Email",
+      "filled": false,
+      "disabled": false
+    }
+  ],
+  "sanitizedVisibleText": "Contact USER_EMAIL_1",
+  "aliases": [{ "alias": "USER_EMAIL_1", "category": "EMAIL" }],
+  "availableActions": ["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"],
+  "provider": "deterministic",
+  "policy": { "privacyMode": "strict", "navigationAllowlist": [] }
+}
 ```
 
-**Firewall gate:** every `RemoteAgentRequest` passes the privacy firewall before transmission. Denied content (raw values, mappings, unfiltered screenshots) → block/replace, fail closed.
+**Example response** (`{"actions": [...]}` — `[]` when nothing to do or task done):
+
+```json
+{
+  "actions": [{ "action": "TYPE", "target": "#email", "value": "USER_EMAIL_1" }]
+}
+```
+
+**Firewall gate:** every request passes the privacy firewall before transmission. Denied content (raw values, mappings, unfiltered screenshots) → block/replace, fail closed.
 
 ## 3. Structured agent action contract
 

@@ -46,6 +46,15 @@ def plan(request: PlanRequest) -> dict:
     if scan_pii(request.taskObjective, request.sanitizedVisibleText, *struct_texts):
         raise HTTPException(status_code=422, detail="Raw PII detected in outbound request")
 
+    # PRIVACY-MODE gate (fail closed): only "strict" is implemented anywhere
+    # (backend, extension loop, firewall, all tests). Anything else cannot be
+    # honoured, so the request is rejected rather than served half-privately.
+    if request.policy.privacyMode != "strict":
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_privacy_mode", "allowed": ["strict"]},
+        )
+
     try:
         return plan_actions(request)
     except LLMUnavailableError as error:
