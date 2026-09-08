@@ -14,8 +14,10 @@ Privacy: nothing leaves the machine — the strongest tier (CONTRIBUTING.md §5)
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+from urllib.parse import urlparse
 
 import httpx
 
@@ -32,12 +34,56 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "gemma3:12b"
 TIMEOUT_SECONDS = 90.0
 
+#: Hostnames that always count as loopback without consulting DNS.
+_LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _validate_base_url(base_url: str) -> str:
+    """Fail closed at construction: `OLLAMA_URL` must be loopback `http(s)`.
+
+    Blocks non-http schemes (`file://`, `ftp://`), RFC-1918 private ranges,
+    link-local (`169.254.x.x`, e.g. cloud metadata endpoints), and any other
+    non-loopback literal. DNS names other than `localhost` — whose privateness
+    cannot be established without a network lookup — require the explicit
+    `OLLAMA_ALLOW_REMOTE=true` escape hatch for intentional remote use.
+    """
+    normalized = (base_url or "").strip().rstrip("/")
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not host:
+        raise ValueError(
+            "OLLAMA_URL must point to loopback (localhost/127.0.0.1). "
+            "Set OLLAMA_ALLOW_REMOTE=true to permit remote hosts."
+        )
+    if host in _LOOPBACK_NAMES:
+        return normalized
+    allow_remote = os.environ.get("OLLAMA_ALLOW_REMOTE", "").lower() == "true"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # DNS name: accept only under the explicit remote-use flag.
+        if allow_remote:
+            return normalized
+        raise ValueError(
+            "OLLAMA_URL must point to loopback (localhost/127.0.0.1). "
+            "Set OLLAMA_ALLOW_REMOTE=true to permit remote hosts."
+        ) from None
+    if ip.is_loopback:
+        return normalized
+    # Global-unicast literals only, and only under the explicit flag.
+    if allow_remote and ip.is_global:
+        return normalized
+    raise ValueError(
+        "OLLAMA_URL must point to loopback (localhost/127.0.0.1). "
+        "Set OLLAMA_ALLOW_REMOTE=true to permit remote hosts."
+    )
+
 
 class OllamaProvider:
     name = "ollama"
 
     def __init__(self, base_url: str, model: str) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _validate_base_url(base_url)
         self.model = model
 
     def plan(self, request: PlanRequest) -> PlanResponse:
