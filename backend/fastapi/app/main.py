@@ -6,13 +6,66 @@ service must NEVER receive raw protected values or alias->value mappings
 inbound payload, and the provider layer (Gemini) enforces a POST-SCAN on model output.
 """
 
-from fastapi import FastAPI, HTTPException
+import hmac
+import logging
+import os
+import sys
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from .agent import PlanRequest, plan_actions
 from .llm_common import LLMPIILeakError, LLMUnavailableError
 from .pii_scan import scan_pii
 
+logger = logging.getLogger("privagent-backend")
+
+
+def _required_api_key() -> str | None:
+    """Bearer token for /v1/*, or None when unset (dev mode: auth disabled)."""
+    key = os.environ.get("PRIVAGENT_API_KEY", "")
+    return key if key else None
+
+
+if _required_api_key() is None:
+    logger.warning("PRIVAGENT_API_KEY not set — /v1/* auth disabled (dev mode)")
+
+security = HTTPBearer(auto_error=False)
+
+
+async def verify_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> None:
+    """Enforce bearer auth on /v1/* when `PRIVAGENT_API_KEY` is configured."""
+    required = _required_api_key()
+    if required is None:
+        return
+    presented = credentials.credentials if credentials is not None else ""
+    if not presented or not hmac.compare_digest(presented, required):
+        raise HTTPException(status_code=401, detail={"error": "unauthorized"})
+
+
+limiter = Limiter(key_func=get_remote_address)
+# The test suite shares one in-process client IP; enforcing the quota there
+# would 429 the suite itself. Disable under pytest (or explicitly via
+# PRIVAGENT_RATE_LIMIT=off) — production always enforces.
+if (
+    os.environ.get("PRIVAGENT_RATE_LIMIT", "on").lower() in ("off", "0", "false")
+    or "pytest" in sys.modules
+):
+    limiter.enabled = False
+
 app = FastAPI(title="PrivAgent Backend", version="0.0.0")
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(status_code=429, content={"error": "rate_limited"})
 
 
 @app.get("/health")
@@ -20,8 +73,7 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "privagent-backend", "milestone": "M0"}
 
 
-@app.post("/v1/plan")
-def plan(request: PlanRequest) -> dict:
+def _plan_impl(payload: PlanRequest) -> dict:
     """Plan the next structured action(s) from an ALREADY-SANITIZED request.
 
     PRIVACY (CONTRIBUTING.md §5 Rule 2): the extension sanitizes the payload before it
@@ -34,32 +86,32 @@ def plan(request: PlanRequest) -> dict:
     # (selector/label/name). NOTE: PlanRequest has no `pageContext`/`reason`
     # fields — the LLM result `reason` is covered by the provider POST-SCAN.
     struct_texts: list[str] = []
-    for binding in request.aliases:
+    for binding in payload.aliases:
         struct_texts.append(binding.alias)
         struct_texts.append(binding.category)
-    for node in request.sanitizedPageStructure:
+    for node in payload.sanitizedPageStructure:
         struct_texts.append(node.selector)
         if node.label is not None:
             struct_texts.append(node.label)
         if node.name is not None:
             struct_texts.append(node.name)
     # pageOrigin is a URL: query strings can smuggle raw PII (?email=user@x.com).
-    if request.pageOrigin is not None:
-        struct_texts.append(request.pageOrigin)
-    if scan_pii(request.taskObjective, request.sanitizedVisibleText, *struct_texts):
+    if payload.pageOrigin is not None:
+        struct_texts.append(payload.pageOrigin)
+    if scan_pii(payload.taskObjective, payload.sanitizedVisibleText, *struct_texts):
         raise HTTPException(status_code=422, detail="Raw PII detected in outbound request")
 
     # PRIVACY-MODE gate (fail closed): only "strict" is implemented anywhere
     # (backend, extension loop, firewall, all tests). Anything else cannot be
     # honoured, so the request is rejected rather than served half-privately.
-    if request.policy.privacyMode != "strict":
+    if payload.policy.privacyMode != "strict":
         raise HTTPException(
             status_code=422,
             detail={"error": "invalid_privacy_mode", "allowed": ["strict"]},
         )
 
     try:
-        return plan_actions(request)
+        return plan_actions(payload)
     except LLMUnavailableError as error:
         raise HTTPException(status_code=502, detail="llm_unavailable") from error
     except LLMPIILeakError as error:
@@ -68,7 +120,17 @@ def plan(request: PlanRequest) -> dict:
         raise HTTPException(status_code=501, detail=str(error)) from error
 
 
-@app.post("/v1/act")
-def act(request: PlanRequest) -> dict:
+# NOTE: the `request: Request` parameter is required by slowapi (it resolves the
+# client IP from it); the Pydantic body lives in `payload`. Auth runs first via
+# the route dependency; /health stays unauthenticated by design.
+@app.post("/v1/plan", dependencies=[Depends(verify_token)])
+@limiter.limit("30/minute")
+def plan(payload: PlanRequest, request: Request) -> dict:
+    return _plan_impl(payload)
+
+
+@app.post("/v1/act", dependencies=[Depends(verify_token)])
+@limiter.limit("30/minute")
+def act(payload: PlanRequest, request: Request) -> dict:
     """Alias of `/v1/plan` (same contract, same planner, same guarantees)."""
-    return plan(request)
+    return _plan_impl(payload)

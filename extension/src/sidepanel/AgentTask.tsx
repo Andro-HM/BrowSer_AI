@@ -60,10 +60,17 @@ export function AgentTask() {
       // Planner mode: Local AI (Ollama) and Gemini go through the backend over the SAME
       // fail-closed firewall; Offline uses the in-extension deterministic planner (no
       // network at all). The provider hint lets the backend pick per run without a restart.
+      // Optional backend bearer token (build-time `VITE_PRIVAGENT_API_KEY`).
+      // Absent = dev mode: requests go without an Authorization header.
+      const apiKey = import.meta.env.VITE_PRIVAGENT_API_KEY as string | undefined;
       const gateway =
         plannerMode === 'offline'
           ? createDeterministicPlanner()
-          : createRemoteHttpAgentGateway({ endpoint: REMOTE_PLAN_ENDPOINT, firewall });
+          : createRemoteHttpAgentGateway({
+              endpoint: REMOTE_PLAN_ENDPOINT,
+              firewall,
+              ...(apiKey !== undefined && apiKey.length > 0 ? { apiKey } : {}),
+            });
       const provider = plannerMode === 'offline' ? undefined : (plannerMode === 'local' ? 'ollama' : 'gemini');
 
       const runResult = await runAgentLoop({

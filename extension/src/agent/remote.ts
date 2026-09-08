@@ -26,6 +26,8 @@ export interface RemoteHttpAgentGatewayOptions {
   /** Absolute http(s) endpoint, e.g. `http://localhost:8000/v1/plan`. */
   endpoint: string;
   firewall: PrivacyFirewall;
+  /** Backend bearer token (`PRIVAGENT_API_KEY`). Absent = dev mode, no header. */
+  apiKey?: string;
   /** Injectable transport (tests never touch the network). Defaults to global fetch. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -46,7 +48,12 @@ export function createRemoteHttpAgentGateway(options: RemoteHttpAgentGatewayOpti
       try {
         response = await fetchImpl(options.endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(options.apiKey !== undefined && options.apiKey.length > 0
+              ? { Authorization: `Bearer ${options.apiKey}` }
+              : {}),
+          },
           body: JSON.stringify(request),
           signal: controller.signal,
         });
