@@ -34,7 +34,7 @@ const STATUS_TEXT: Record<AgentRunResult['status'], string> = {
 
 export function AgentTask() {
   const [task, setTask] = useState('');
-  const [useGemini, setUseGemini] = useState(true);
+  const [plannerMode, setPlannerMode] = useState<'local' | 'gemini' | 'offline'>('local');
   const [state, setState] = useState<RunState>('idle');
   const [result, setResult] = useState<AgentRunResult | null>(null);
 
@@ -57,17 +57,21 @@ export function AgentTask() {
       const vault = createLocalVault();
       // ONE firewall shared by the loop gate and the remote gateway's pre-transmit gate.
       const firewall = createPrivacyFirewall();
-      // Planner toggle: the remote (Gemini) gateway talks to the FastAPI backend over the
-      // SAME fail-closed firewall; the deterministic planner is the offline fallback.
-      const gateway = useGemini
-        ? createRemoteHttpAgentGateway({ endpoint: REMOTE_PLAN_ENDPOINT, firewall })
-        : createDeterministicPlanner();
+      // Planner mode: Local AI (Ollama) and Gemini go through the backend over the SAME
+      // fail-closed firewall; Offline uses the in-extension deterministic planner (no
+      // network at all). The provider hint lets the backend pick per run without a restart.
+      const gateway =
+        plannerMode === 'offline'
+          ? createDeterministicPlanner()
+          : createRemoteHttpAgentGateway({ endpoint: REMOTE_PLAN_ENDPOINT, firewall });
+      const provider = plannerMode === 'offline' ? undefined : (plannerMode === 'local' ? 'ollama' : 'gemini');
 
       const runResult = await runAgentLoop({
         task,
         sessionId: `agent-${Date.now()}`,
         vault,
         gateway,
+        provider,
         navigationAllowlist: allowlist,
         bridge: createActionBridge({
           vault,
@@ -117,16 +121,42 @@ export function AgentTask() {
         disabled={state === 'running'}
       />
 
-      <label className="mt-2 flex items-center gap-2 text-xs text-neutral-600">
-        <input
-          data-testid="use-gemini"
-          type="checkbox"
-          checked={useGemini}
-          onChange={(event) => setUseGemini(event.target.checked)}
-          disabled={state === 'running'}
-        />
-        Use Gemini AI Planner (localhost:8000)
-      </label>
+      <fieldset className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-600">
+        <legend className="sr-only">Planner mode</legend>
+        <label className="flex items-center gap-1">
+          <input
+            data-testid="planner-mode-local"
+            type="radio"
+            name="planner-mode"
+            checked={plannerMode === 'local'}
+            onChange={() => setPlannerMode('local')}
+            disabled={state === 'running'}
+          />
+          Local AI (Ollama)
+        </label>
+        <label className="flex items-center gap-1">
+          <input
+            data-testid="planner-mode-gemini"
+            type="radio"
+            name="planner-mode"
+            checked={plannerMode === 'gemini'}
+            onChange={() => setPlannerMode('gemini')}
+            disabled={state === 'running'}
+          />
+          Gemini
+        </label>
+        <label className="flex items-center gap-1">
+          <input
+            data-testid="planner-mode-offline"
+            type="radio"
+            name="planner-mode"
+            checked={plannerMode === 'offline'}
+            onChange={() => setPlannerMode('offline')}
+            disabled={state === 'running'}
+          />
+          Offline
+        </label>
+      </fieldset>
 
       <button
         className="mt-2 px-4 py-1.5 bg-emerald-600 text-white rounded text-sm disabled:opacity-50"

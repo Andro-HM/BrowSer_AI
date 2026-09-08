@@ -22,6 +22,12 @@ never start the next milestone without an explicit request.
 Every milestone ends with ALL gates green, `PROJECT_STATUS.md` updated, and an honest
 limitations list. Nothing is claimed that was not run.
 
+## Backend provider env (`backend/fastapi`)
+
+- `AGENT_PROVIDER=deterministic|gemini|ollama` (per-run override via `PlanRequest.provider`)
+- Gemini: `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.0-flash`)
+- Local/Ollama: `OLLAMA_URL` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `gemma3:12b`)
+
 ## Pointers
 
 - Status + milestone log: [PROJECT_STATUS.md](PROJECT_STATUS.md)

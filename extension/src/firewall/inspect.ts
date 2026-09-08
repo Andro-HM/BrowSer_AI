@@ -43,6 +43,7 @@ const ALIAS_PATTERN = /^USER_[A-Z]+_\d+$/;
 const REQUEST_KEYS = new Set([
   'taskObjective',
   'pageOrigin',
+  'provider',
   'sanitizedPageStructure',
   'sanitizedVisibleText',
   'aliases',
@@ -106,7 +107,7 @@ export function createPrivacyFirewall(): PrivacyFirewall {
 
       const r = request as unknown as Record<string, unknown>;
       // `pageOrigin` is OPTIONAL (origin-only when present); every other key is required.
-      const required = [...REQUEST_KEYS].filter((key) => key !== 'pageOrigin');
+      const required = [...REQUEST_KEYS].filter((key) => key !== 'pageOrigin' && key !== 'provider');
       const missing = required.filter((key) => !(key in r));
       if (missing.length > 0) return Promise.resolve(deny('FIREWALL_MALFORMED'));
 
@@ -144,6 +145,17 @@ export function createPrivacyFirewall(): PrivacyFirewall {
         !availableActions.every((kind) => (ALLOWED_ACTION_KINDS as readonly string[]).includes(kind as string))
       ) {
         return Promise.resolve(deny('FIREWALL_BAD_ACTIONS'));
+      }
+
+      // provider: an optional, value-free planner hint restricted to the known set.
+      if (r['provider'] !== undefined) {
+        const provider = r['provider'];
+        if (
+          typeof provider !== 'string' ||
+          !['gemini', 'ollama', 'deterministic'].includes(provider)
+        ) {
+          return Promise.resolve(deny('FIREWALL_MALFORMED'));
+        }
       }
 
       // pageOrigin: origin-only string (never a full URL) — validated as such.

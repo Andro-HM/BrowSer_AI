@@ -68,6 +68,7 @@ class PlanRequest(BaseModel):
     availableActions: list[
         Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
     ]
+    provider: Literal["deterministic", "gemini", "ollama"] | None = None
     policy: ActionPolicy
 
 
@@ -191,17 +192,22 @@ class RemotePlannerStub:
         raise NotImplementedError("remote planner provider is wired in S4")
 
 
-def get_provider() -> Planner:
-    name = os.environ.get("AGENT_PROVIDER", "deterministic")
+def get_provider(name: str) -> Planner:
     if name == "gemini":
-        # Lazy import: the offline deterministic default must work without the SDK.
+        # Lazy imports: the offline deterministic default must work without any SDK.
         from .gemini_provider import create_gemini_provider
 
         return create_gemini_provider()
+    if name == "ollama":
+        from .ollama_provider import create_ollama_provider
+
+        return create_ollama_provider()
     if name == "remote":
         return RemotePlannerStub()
     return DeterministicPlanner()
 
 
 def plan_actions(request: PlanRequest) -> dict[str, Any]:
-    return get_provider().plan(request).model_dump()
+    # Per-request provider wins; otherwise the AGENT_PROVIDER env default.
+    provider_name = request.provider or os.environ.get("AGENT_PROVIDER", "deterministic")
+    return get_provider(provider_name).plan(request).model_dump()

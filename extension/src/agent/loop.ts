@@ -77,6 +77,10 @@ export interface AgentLoopOptions {
   bridge: ActionBridge;
   firewall: PrivacyFirewall;
   /**
+   * Planner provider hint passed to the backend (value-free; absent = env default).
+   */
+  provider?: RemoteAgentRequest['provider'];
+  /**
    * NAVIGATE allowlist (validated origins). DEFAULT: the scanned page's own origin —
    * "navigation may stay on the site the user is on" — derived from the snapshot URL
    * (origin only, never the full URL). Empty when no origin is known (fail closed).
@@ -211,6 +215,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
     const request: RemoteAgentRequest = {
       taskObjective: options.task,
       pageOrigin,
+      ...(options.provider !== undefined ? { provider: options.provider } : {}),
       sanitizedPageStructure: toSanitizedNodes(observed.structure),
       sanitizedVisibleText: enforcement.sanitizedText,
       aliases: enforcement.aliases,

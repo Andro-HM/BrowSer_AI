@@ -1349,6 +1349,56 @@ gateway's pre-transmit gate.
 
 ---
 
+## 9n. M9 — Local model provider (Ollama) + 3-way planner toggle
+
+_Added 2026-09-02._
+
+### Scope
+
+Wired a LOCAL open-weights model into the `AGENT_PROVIDER` seam alongside Gemini:
+`AGENT_PROVIDER=ollama` selects `OllamaProvider`, which talks to host Ollama
+(`OLLAMA_URL`, default `http://localhost:11434`; `OLLAMA_MODEL`, default `gemma3:12b` —
+point it at your exact Gemma tag). The panel toggle is now a 3-way radio with **Local
+AI (Ollama)** as the default, plus **Gemini** and **Offline** (in-extension deterministic
+planner, zero network).
+
+### Design decisions
+
+- **Shared `llm_common.py`**: `PlannedAction`/`PlanResult`/`SYSTEM_INSTRUCTION`/post-scan/
+  error classes extracted so Gemini and Ollama behave identically (single source of truth);
+  `gemini_provider` re-exports the old names so existing tests are untouched.
+- **Per-request provider**: `PlanRequest.provider` (`deterministic|gemini|ollama`, optional)
+  lets the panel switch live without a backend restart; `request.provider` wins over the
+  `AGENT_PROVIDER` env default. The extension firewall allows the value-free `provider`
+  field (restricted to the known set) and the loop passes it through.
+- **Fail-closed parity**: Ollama down / 5xx / timeout / malformed JSON -> HTTP 502
+  `llm_unavailable`; POST-SCAN on the model's `value`+`reason` -> 502 on a PII leak.
+- **Local = strongest privacy tier**: nothing leaves the machine; still consumes the same
+  alias-only payload through the same firewall/scan contract.
+
+### Verification — actually executed
+
+- Backend `pytest`: **29 passed / 29** (10 new Ollama tests, mocked httpx — no live calls;
+  all existing test_plan/test_health/test_gemini green).
+- Local path proven end-to-end with a throwaway probe: real extension in Local mode ->
+  remote gateway (`provider=ollama`) -> backend -> mock Ollama (canned action sequence) ->
+  contract actions -> form filled + submitted. Probe + mock removed after.
+- Extension unit: firewall accepts `provider` (rejects unknown values); loop passes it
+  through. e2e offline specs select the **Offline** radio; agent-task asserts the default
+  is **Local AI**.
+- Gates: typecheck ✅ lint ✅ vitest **344/344** ✅ bench 3/3 ✅ build ✅ e2e **24/24** ✅
+  backend 29/29 ✅.
+
+### Known limitations
+
+- Live Gemma inference is a manual demo step (requires Ollama + the model pulled on the
+  host; CI runs the mocked path).
+- Gemma 3 12B is multimodal — vision-capable planning (feeding visual context/rasters to
+  the planner) is the future direction; the current planner contract is text/structure
+  only, matching Gemini.
+
+---
+
 ## 10. Corrections to earlier milestone claims
 
 Recorded for honesty (CONTRIBUTING.md §22) — these were found while starting M3, not introduced by

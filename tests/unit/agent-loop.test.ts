@@ -331,6 +331,29 @@ describe('agent loop (deterministic, in-extension)', () => {
     expect(result.steps[0]?.action).toEqual({ action: 'NAVIGATE', url: 'https://privagent.test' });
   });
 
+  it('passes the provider hint through to the outbound request', async () => {
+    const seenRequests: import('../../extension/src/types/contracts').RemoteAgentRequest[] = [];
+    const page = fakePage();
+    const vault = createLocalVault();
+    const result = await runAgentLoop({
+      task: 'fill the form with my details and submit',
+      sessionId: 'provider-session',
+      vault,
+      provider: 'ollama',
+      gateway: {
+        plan: async (request) => {
+          seenRequests.push(request);
+          return createDeterministicPlanner().plan(request);
+        },
+      },
+      bridge: createActionBridge({ vault, sendToPage: page.executor }),
+      firewall: createPrivacyFirewall(),
+      scan: page.scan,
+    });
+    expect(result.status).toBe('completed');
+    expect(seenRequests[0]?.provider).toBe('ollama');
+  });
+
   it('rejects an empty task', async () => {
     const page = fakePage();
     const { run } = buildLoop(page, '   ');

@@ -9,7 +9,7 @@ inbound payload, and the provider layer (Gemini) enforces a POST-SCAN on model o
 from fastapi import FastAPI, HTTPException
 
 from .agent import PlanRequest, plan_actions
-from .gemini_provider import GeminiPIILeakError, GeminiUnavailableError
+from .llm_common import LLMPIILeakError, LLMUnavailableError
 from .pii_scan import scan_pii
 
 app = FastAPI(title="PrivAgent Backend", version="0.0.0")
@@ -34,9 +34,9 @@ def plan(request: PlanRequest) -> dict:
 
     try:
         return plan_actions(request)
-    except GeminiUnavailableError as error:
+    except LLMUnavailableError as error:
         raise HTTPException(status_code=502, detail="llm_unavailable") from error
-    except GeminiPIILeakError as error:
+    except LLMPIILeakError as error:
         raise HTTPException(status_code=502, detail="PII leak detected in LLM response") from error
     except NotImplementedError as error:
         raise HTTPException(status_code=501, detail=str(error)) from error

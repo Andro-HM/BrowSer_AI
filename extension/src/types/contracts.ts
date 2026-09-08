@@ -358,6 +358,12 @@ export interface RemoteAgentRequest {
   taskObjective: string;
   /** Current page origin ONLY (never the full URL — path/query can carry content). */
   pageOrigin?: string;
+  /**
+   * Planner provider hint for the backend (value-free; absent = backend env default).
+   * 'deterministic' forces the offline rules engine even when the backend defaults to
+   * a model provider.
+   */
+  provider?: 'gemini' | 'ollama' | 'deterministic';
   sanitizedPageStructure: SanitizedNode[];
   sanitizedVisibleText: string;
   aliases: { alias: string; category: SensitiveCategory }[];

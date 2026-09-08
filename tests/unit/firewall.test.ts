@@ -74,6 +74,15 @@ describe('privacy firewall', () => {
     expect((await firewall.inspect(badActions)).reason).toBe('FIREWALL_BAD_ACTIONS');
   });
 
+  it('accepts an optional provider hint and rejects unknown providers', async () => {
+    const firewall = createPrivacyFirewall();
+    for (const provider of ['gemini', 'ollama', 'deterministic'] as const) {
+      expect((await firewall.inspect(cleanRequest({ provider }))).allowed).toBe(true);
+    }
+    const bad = cleanRequest({ provider: 'webgpu' as never });
+    expect((await firewall.inspect(bad)).reason).toBe('FIREWALL_MALFORMED');
+  });
+
   it('accepts an optional origin-only pageOrigin and rejects full URLs', async () => {
     const firewall = createPrivacyFirewall();
     const withOrigin = cleanRequest({ pageOrigin: 'https://privagent.test' });
