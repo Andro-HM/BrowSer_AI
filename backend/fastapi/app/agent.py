@@ -170,7 +170,7 @@ class DeterministicPlanner:
                     hostname = urlparse(entry).hostname or ""
                 except ValueError:
                     continue
-                if hostname == host or hostname.endswith(f".{host}"):
+                if host == hostname or host.endswith(f".{hostname}"):
                     try:
                         if urlparse(request.pageOrigin).hostname != hostname:
                             return PlanResponse(

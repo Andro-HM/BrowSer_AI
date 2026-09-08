@@ -8,11 +8,14 @@ perception + multi-signal PII detection, local semantic aliasing (`USER_EMAIL_1`
 local identity vault, an agent that plans structured actions over sanitized context,
 and a fail-closed **privacy firewall** as the single outbound boundary.
 
-> **Status:** M0–M7 complete (extension, perception, policy, sanitization, agent loop,
-> action bridge, privacy firewall, telemetry, PrivAgent-Bench). The remote LLM provider
-> adapter (Ollama) is the next milestone — the deterministic planner drives everything
-> today. See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the milestone log and
-> [docs/benchmark.md](docs/benchmark.md) for measured results.
+> **Status:** M0–M9 complete — extension, perception (BlazeFace
+> ONNX face detection, Tesseract OCR, page classification), policy,
+> sanitization, agent loop, action bridge, privacy firewall,
+> telemetry, PrivAgent-Bench, Gemini Flash provider, and local
+> Ollama provider. Three planning modes: **Local AI** (Ollama,
+> default — everything on-device), **Gemini** (cloud planner,
+> aliases only), **Offline** (deterministic, zero network).
+> See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the milestone log.
 
 ## The six differentiators (and their proof)
 
@@ -99,3 +102,6 @@ The short version: protected values and alias↔value mappings stay local; the f
 is the only egress and fails closed; webpage content is untrusted; the agent emits only
 structured actions (`CLICK/TYPE/SELECT/SCROLL/NAVIGATE`) — never arbitrary code; logs,
 telemetry and benchmark exports never contain raw values.
+
+**License note:** icon-detect-640.onnx (OmniParser) is
+AGPL-3.0 — see docs/ for details.

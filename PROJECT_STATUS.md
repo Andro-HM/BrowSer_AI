@@ -1421,19 +1421,4 @@ it.
 
 ## 11. Next milestone
 
-**M6 — agent loop, action bridge, firewall seam, backend planner.** COMPLETE and
-verified (see §9f). The two integration points left open by §9c are now closed:
-(1) the loop assembles a `RemoteAgentRequest` from `enforcePrivacy` output and (2)
-every outbound payload passes the implemented fail-closed firewall
-(`extension/src/firewall/inspect.ts`).
-
-The next milestone is **not started** and, per CONTRIBUTING.md §24, will not begin
-until explicitly requested. Natural follow-ups, in rough order:
-
-1. **S4 — remote provider adapter:** Ollama (`qwen2.5vl:7b`) behind
-   `AGENT_PROVIDER=remote` (the 501 seam in `backend/fastapi/app/agent.py`),
-   JSON-schema-constrained actions, retries/timeouts; e2e against the live backend.
-2. **M7 — telemetry + leakage sentinel:** persist `PrivacyEvent`s (structured,
-   value-free), benchmark harness over `benchmark/` pages, canary reports.
-3. **Loop hardening:** visual/OCR signals in per-step enforcement, planner-driven
-   SCROLL for below-fold controls, allowlisted navigation coverage in e2e.
+All planned milestones complete. Remaining: LICENSE, demo video, SIH submission report.

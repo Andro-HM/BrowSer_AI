@@ -41,7 +41,8 @@ class GeminiProvider:
         # Missing key is surfaced on the planning path only (never on /health).
         if not self.api_key:
             raise HTTPException(
-                status_code=500, detail="GEMINI_API_KEY environment variable is missing"
+                status_code=502,
+                detail={"error": "llm_unavailable", "message": "GEMINI_API_KEY not configured"},
             )
 
         # Imported here so the module is importable (and the deterministic default
