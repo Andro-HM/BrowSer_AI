@@ -2,7 +2,7 @@
 // See docs/interface-contracts.md for the accompanying design notes.
 
 export type SensitiveCategory =
-  'EMAIL' | 'PHONE' | 'NAME' | 'ADDRESS' | 'PASSWORD' | 'OTP' | 'PAYMENT' | 'ID' | 'CUSTOM';
+  'EMAIL' | 'PHONE' | 'NAME' | 'ADDRESS' | 'PASSWORD' | 'OTP' | 'PAYMENT' | 'ID' | 'CUSTOM' | 'AADHAAR' | 'PAN' | 'UPI';
 
 export type PerceptionSource = 'DOM' | 'OCR' | 'VISION' | 'FUSED';
 

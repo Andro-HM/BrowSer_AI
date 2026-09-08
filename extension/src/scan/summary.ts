@@ -49,6 +49,9 @@ const CATEGORY_LABELS: Record<SensitiveCategory, string> = {
   PAYMENT: 'Payment card',
   ID: 'Identity document',
   CUSTOM: 'Sensitive value',
+  AADHAAR: 'Aadhaar number',
+  PAN: 'PAN card',
+  UPI: 'UPI ID',
 };
 
 /** One display row. Carries display metadata only — never a raw value. */

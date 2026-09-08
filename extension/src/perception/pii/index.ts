@@ -4,6 +4,26 @@ const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const PHONE_REGEX = /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g;
 const CREDIT_CARD_REGEX = /\b(?:\d[ -]?){13,19}\b/g;
 const CREDENTIAL_REGEX = /(?:api[_-]?key|secret|token|password|bearer|auth|access[_-]?token)\s*[:=]\s*["']?([A-Za-z0-9\-_.~+/]{8,})["']?/gi;
+// Indian PII (SIH 2026): Aadhaar (UIDAI: first digit 2-9, 4-4-4 groups, space/hyphen
+// separated), PAN (5 letters + 4 digits + 1 letter), UPI VPA (user@handle, gated).
+// Lookarounds keep card-number prefixes (e.g. a 16-digit card's first 12 digits)
+// from misfiring as Aadhaar. Existing detectors above are untouched.
+const AADHAAR_REGEX = /(?<!\d)(?<![\d][\s-])[2-9][0-9]{3}[\s-]?[0-9]{4}[\s-]?[0-9]{4}(?![\s-]?\d)/g;
+const PAN_REGEX = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/g;
+const UPI_REGEX = /\b[\w.-]{2,256}@[a-zA-Z]{2,64}\b/g;
+const UPI_HANDLES = new Set([
+  'okicici',
+  'oksbi',
+  'okaxis',
+  'okhdfc',
+  'ybl',
+  'ibl',
+  'upi',
+  'paytm',
+  'gpay',
+  'phonepe',
+]);
+const UPI_CONTEXT = /(upi|vpa|\bpay\b)/i;
 
 function isValidLuhn(digits: string): boolean {
   const sanitized = digits.replace(/\D/g, '');
@@ -80,6 +100,61 @@ export function detectPII(text: string): SensitiveEntity[] {
         text: match[0],
       } as unknown as SensitiveEntity);
     }
+  }
+
+  for (const match of text.matchAll(AADHAAR_REGEX)) {
+    if (match.index !== undefined && match[0]) {
+      entities.push({
+        id: `aadhaar-${match.index}`,
+        category: 'AADHAAR',
+        confidence: 1,
+        reasons: ['Matched pattern for AADHAAR'],
+        source: 'DOM',
+        text: match[0],
+      } as unknown as SensitiveEntity);
+    }
+  }
+
+  for (const match of text.matchAll(PAN_REGEX)) {
+    if (match.index !== undefined && match[0]) {
+      entities.push({
+        id: `pan-${match.index}`,
+        category: 'PAN',
+        confidence: 1,
+        reasons: ['Matched pattern for PAN'],
+        source: 'DOM',
+        text: match[0],
+      } as unknown as SensitiveEntity);
+    }
+  }
+
+  // Email spans first: a UPI candidate inside a real email address (user@host.com)
+  // belongs to the email, not to a VPA.
+  const emailSpans: { start: number; end: number }[] = [];
+  for (const match of text.matchAll(EMAIL_REGEX)) {
+    if (match.index !== undefined && match[0]) {
+      emailSpans.push({ start: match.index, end: match.index + match[0].length });
+    }
+  }
+  for (const match of text.matchAll(UPI_REGEX)) {
+    if (match.index === undefined || !match[0]) continue;
+    const start = match.index;
+    const end = start + match[0].length;
+    // Part of a larger email address (e.g. user@host in user@host.com) — skip.
+    if (text[end] === '.') continue;
+    if (emailSpans.some((s) => start < s.end && end > s.start)) continue;
+    const domain = (match[0].split('@')[1] ?? '').toLowerCase();
+    const knownHandle = UPI_HANDLES.has(domain);
+    const context = text.slice(Math.max(0, start - 24), start);
+    if (!knownHandle && !UPI_CONTEXT.test(context)) continue;
+    entities.push({
+      id: `upi-${start}`,
+      category: 'UPI',
+      confidence: 1,
+      reasons: ['Matched pattern for UPI'],
+      source: 'DOM',
+      text: match[0],
+    } as unknown as SensitiveEntity);
   }
 
   return entities;

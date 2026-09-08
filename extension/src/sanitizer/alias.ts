@@ -25,6 +25,9 @@ const CATEGORY_ALIASES: Readonly<Record<string, SensitiveCategory>> = {
   PAYMENT_CARD: 'PAYMENT',
   ID: 'ID',
   CUSTOM: 'CUSTOM',
+  AADHAAR: 'AADHAAR',
+  PAN: 'PAN',
+  UPI: 'UPI',
 };
 
 /**

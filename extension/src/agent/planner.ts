@@ -24,6 +24,9 @@ const CATEGORY_FIELD_KEYWORDS: Readonly<Record<SensitiveCategory, readonly strin
   PAYMENT: ['card', 'cc'],
   ID: ['id'],
   CUSTOM: [],
+  AADHAAR: ['aadhaar', 'uidai'],
+  PAN: ['pan'],
+  UPI: ['upi', 'vpa'],
 };
 
 /** One viewport-height scroll step toward a below-fold control (blueprint §8 SCROLL). */

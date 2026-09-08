@@ -12,6 +12,28 @@ import re
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 PHONE_RE = re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
 CARD_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+# Indian PII mirrors of the extension detectors (SIH 2026): Aadhaar (UIDAI first
+# digit 2-9, 4-4-4 groups; lookarounds keep card prefixes from misfiring), PAN
+# (5 letters + 4 digits + 1 letter), UPI VPA (gated on known handles/context and
+# never inside a real email address). Existing patterns above are untouched.
+AADHAAR_RE = re.compile(r"(?<!\d)(?<![\d][\s-])[2-9][0-9]{3}[\s-]?[0-9]{4}[\s-]?[0-9]{4}(?![\s-]?\d)")
+PAN_RE = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
+UPI_RE = re.compile(r"\b[\w.\-]{2,256}@[a-zA-Z]{2,64}\b")
+UPI_HANDLES = frozenset(
+    {
+        "okicici",
+        "oksbi",
+        "okaxis",
+        "okhdfc",
+        "ybl",
+        "ibl",
+        "upi",
+        "paytm",
+        "gpay",
+        "phonepe",
+    }
+)
+UPI_CONTEXT_RE = re.compile(r"(upi|vpa|\bpay\b)", re.IGNORECASE)
 
 
 def _luhn_valid(value: str) -> bool:
@@ -31,6 +53,22 @@ def _luhn_valid(value: str) -> bool:
     return total % 10 == 0
 
 
+def _upi_hits(text: str) -> list[str]:
+    """UPI VPAs: known-handle or UPI-context matches, never inside an email."""
+    email_spans = [(m.start(), m.end()) for m in EMAIL_RE.finditer(text)]
+    hits: list[str] = []
+    for match in UPI_RE.finditer(text):
+        start, end = match.start(), match.end()
+        if end < len(text) and text[end] == ".":
+            continue
+        if any(start < span_end and end > span_start for span_start, span_end in email_spans):
+            continue
+        domain = (match.group(0).split("@", 1)[1] if "@" in match.group(0) else "").lower()
+        if domain in UPI_HANDLES or UPI_CONTEXT_RE.search(text[max(0, start - 24) : start]):
+            hits.append(match.group(0))
+    return hits
+
+
 def scan_pii(*texts: str) -> list[str]:
     """Return the raw PII values found across `texts` (empty when none)."""
     hits: list[str] = []
@@ -42,4 +80,7 @@ def scan_pii(*texts: str) -> list[str]:
         for match in CARD_RE.findall(text):
             if _luhn_valid(match):
                 hits.append(match)
+        hits.extend(AADHAAR_RE.findall(text))
+        hits.extend(PAN_RE.findall(text))
+        hits.extend(_upi_hits(text))
     return hits
