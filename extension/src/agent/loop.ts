@@ -125,7 +125,7 @@ export function toSanitizedNodes(structure: ScanPageResponse['structure']): Sani
   return out;
 }
 
-export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
+async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const steps: AgentStepRecord[] = [];
   let actionsExecuted = 0;
@@ -133,17 +133,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
   const startedAt = performance.now();
 
   // Every terminal path funnels through stop() — completed, blocked, error, or
-  // budget-exhausted. The wipe below therefore runs after EVERY run (success or
-  // failure) and never mid-run: no code after a stop() call touches the vault.
-  const stop = async (status: AgentRunStatus, reason?: string): Promise<AgentRunResult> => {
+  // budget-exhausted. The vault wipe lives in the `runAgentLoop` finally belt
+  // below (covers this funnel AND unexpected escapes); nothing after a stop()
+  // call touches the vault, so the wipe never runs mid-run.
+  const stop = (status: AgentRunStatus, reason?: string): AgentRunResult => {
     options.onEvent?.({ type: 'STOP', code: reason ?? status, index: steps.length });
-    // Privacy: wipe alias↔value mappings after every run — values must not
-    // persist between tasks. Fail-safe: a wipe failure never changes the result.
-    try {
-      await options.vault.clearSession?.(options.sessionId);
-    } catch {
-      // Best-effort cleanup; the mappings die with the context regardless.
-    }
     return {
       status,
       reason,
@@ -303,6 +297,24 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunR
   }
 
   return stop('max_steps');
+}
+
+/**
+ * Public entry point. The `finally` belt covers the one path `stop()` cannot:
+ * an exception escaping the loop body itself (e.g. enforcement throwing outside
+ * any guarded await). The vault is wiped even on an unexpected crash — values
+ * must not survive a crashed run. Double-wipe with `stop()` is a harmless no-op.
+ */
+export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
+  try {
+    return await runLoop(options);
+  } finally {
+    try {
+      await options.vault.clearSession?.(options.sessionId);
+    } catch {
+      // Best-effort cleanup; mappings die with the context regardless.
+    }
+  }
 }
 
 type ExecuteOutcome = string;

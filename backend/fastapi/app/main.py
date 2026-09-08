@@ -116,6 +116,13 @@ def _plan_impl(payload: PlanRequest) -> dict:
         raise HTTPException(status_code=502, detail="llm_unavailable") from error
     except LLMPIILeakError as error:
         raise HTTPException(status_code=502, detail="PII leak detected in LLM response") from error
+    except ValueError as error:
+        # Misconfigured provider (e.g. rejected OLLAMA_URL): SSRF stays blocked,
+        # surfaced as a 502 — never a 500, never with the offending URL echoed.
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "llm_unavailable", "message": "invalid OLLAMA_URL config"},
+        ) from error
     except NotImplementedError as error:
         raise HTTPException(status_code=501, detail=str(error)) from error
 
