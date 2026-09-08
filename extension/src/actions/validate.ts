@@ -15,7 +15,10 @@ export interface ValidationResult {
 }
 
 export interface ActionPolicy {
-  /** NAVIGATE is denied unless the URL starts with one of these https prefixes. */
+  /** NAVIGATE is denied unless the URL's hostname exactly matches, or is a
+   * subdomain of, one of these allowlisted https origins. String-prefix
+   * matching is deliberately NOT used: 'https://example.com.evil.com'
+   * starts with 'https://example.com' but is a different host. */
   navigationAllowlist: string[];
   /** |SCROLL.amount| is clamped/rejected above this bound. */
   maxScroll: number;
@@ -137,9 +140,30 @@ export function validateActionPolicy(
         return fail('POLICY_URL_MALFORMED');
       }
       if (parsed.protocol !== 'https:') return fail('POLICY_URL_NOT_HTTPS');
-      const allowed = policy.navigationAllowlist.some(
-        (prefix) => parsed.origin === prefix || parsed.origin.startsWith(prefix),
-      );
+      // Embedded credentials ride along on navigation — fail closed.
+      if (parsed.username !== '' || parsed.password !== '') return fail('POLICY_URL_NOT_ALLOWLISTED');
+      // Hostname matching (never string-prefix): exact host or a true subdomain,
+      // with port equality (origin semantics), trailing-dot FQDN normalization,
+      // and https-only allowlist entries. A malformed or non-https entry matches
+      // nothing (fail closed on that entry).
+      const requestHost = parsed.hostname.endsWith('.')
+        ? parsed.hostname.slice(0, -1)
+        : parsed.hostname;
+      const allowed = policy.navigationAllowlist.some((entry) => {
+        let allowedUrl: URL;
+        try {
+          allowedUrl = new URL(entry);
+        } catch {
+          return false;
+        }
+        if (allowedUrl.protocol !== 'https:') return false;
+        const allowedHost = allowedUrl.hostname.endsWith('.')
+          ? allowedUrl.hostname.slice(0, -1)
+          : allowedUrl.hostname;
+        if (allowedHost.length === 0) return false;
+        if (parsed.port !== allowedUrl.port) return false;
+        return requestHost === allowedHost || requestHost.endsWith(`.${allowedHost}`);
+      });
       if (!allowed) return fail('POLICY_URL_NOT_ALLOWLISTED');
       return pass();
     }

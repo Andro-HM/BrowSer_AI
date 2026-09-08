@@ -93,4 +93,41 @@ describe('action policy validation', () => {
       'POLICY_SCROLL_TOO_LARGE',
     );
   });
+
+  it('matches NAVIGATE allowlist by hostname, never by string prefix', () => {
+    const policy = { ...DEFAULT_ACTION_POLICY, navigationAllowlist: ['https://example.com'] };
+    const check = (url: string) =>
+      validateActionPolicy({ action: 'NAVIGATE', url }, policy);
+    // Exact match → allowed.
+    expect(check('https://example.com/').valid).toBe(true);
+    expect(check('https://example.com/some/path').valid).toBe(true);
+    // True subdomain → allowed.
+    expect(check('https://portal.example.com/').valid).toBe(true);
+    // Evil suffix domain → blocked (startsWith would have allowed it).
+    expect(check('https://example.com.evil.com/').valid).toBe(false);
+    expect(check('https://example.com.evil.com/').reason).toBe('POLICY_URL_NOT_ALLOWLISTED');
+    // Prefix trick → blocked.
+    expect(check('https://notexample.com/').valid).toBe(false);
+    // Unrelated domain → blocked.
+    expect(check('https://attacker.com/').valid).toBe(false);
+  });
+
+  it('hardens NAVIGATE allowlist: ports, trailing dots, https-only entries, no credentials', () => {
+    const check = (url: string, allowlist: string[] = ['https://example.com']) =>
+      validateActionPolicy(
+        { action: 'NAVIGATE', url },
+        { ...DEFAULT_ACTION_POLICY, navigationAllowlist: allowlist },
+      );
+    // Port mismatch → blocked (allowlist entry pins the default port '').
+    expect(check('https://example.com:8443/').valid).toBe(false);
+    // Port equality → allowed.
+    expect(check('https://example.com:8443/', ['https://example.com:8443']).valid).toBe(true);
+    // Trailing-dot FQDN → normalized and allowed.
+    expect(check('https://example.com./path').valid).toBe(true);
+    // http:// allowlist entry authorizes nothing (fail closed).
+    expect(check('https://example.com/', ['http://example.com']).valid).toBe(false);
+    // Embedded credentials → blocked.
+    expect(check('https://user:pass@example.com/').valid).toBe(false);
+    expect(check('https://user@example.com/').valid).toBe(false);
+  });
 });
