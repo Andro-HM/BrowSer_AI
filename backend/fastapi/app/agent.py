@@ -128,23 +128,26 @@ class DeterministicPlanner:
 
     def plan(self, request: PlanRequest) -> PlanResponse:
         nodes = request.sanitizedPageStructure
+        # The allowlist only narrows: empty means every action kind is permitted.
+        allowed = request.availableActions or ["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
 
-        for binding in request.aliases:
-            if not ALIAS_PATTERN.match(binding.alias):
-                continue
-            keywords = CATEGORY_FIELD_KEYWORDS.get(binding.category.upper(), ())
-            if not keywords:
-                continue
-            for node in nodes:
-                if (
-                    _is_field(node)
-                    and not node.filled
-                    and not node.disabled
-                    and _matches_category(node, keywords)
-                ):
-                    return PlanResponse(
-                        actions=[TypeAction(action="TYPE", target=node.selector, value=binding.alias)]
-                    )
+        if "TYPE" in allowed:
+            for binding in request.aliases:
+                if not ALIAS_PATTERN.match(binding.alias):
+                    continue
+                keywords = CATEGORY_FIELD_KEYWORDS.get(binding.category.upper(), ())
+                if not keywords:
+                    continue
+                for node in nodes:
+                    if (
+                        _is_field(node)
+                        and not node.filled
+                        and not node.disabled
+                        and _matches_category(node, keywords)
+                    ):
+                        return PlanResponse(
+                            actions=[TypeAction(action="TYPE", target=node.selector, value=binding.alias)]
+                        )
 
         if SUBMIT_TASK_VERBS.search(request.taskObjective):
             for node in nodes:
@@ -155,15 +158,18 @@ class DeterministicPlanner:
                     and SUBMIT_LABELS.match(node.label)
                 ):
                     if node.belowFold:
-                        return PlanResponse(actions=[ScrollAction(action="SCROLL", amount=720)])
-                    return PlanResponse(actions=[ClickAction(action="CLICK", target=node.selector)])
+                        if "SCROLL" in allowed:
+                            return PlanResponse(actions=[ScrollAction(action="SCROLL", amount=720)])
+                        continue
+                    if "CLICK" in allowed:
+                        return PlanResponse(actions=[ClickAction(action="CLICK", target=node.selector)])
 
         match = re.search(
             r"\b(?:open|go to|navigate to|visit)\s+([a-z0-9-]+(?:\.[a-z0-9-]+)+)",
             request.taskObjective,
             re.I,
         )
-        if match and request.pageOrigin is not None:
+        if match and "NAVIGATE" in allowed and request.pageOrigin is not None:
             host = match.group(1).lower()
             for entry in request.policy.navigationAllowlist:
                 try:

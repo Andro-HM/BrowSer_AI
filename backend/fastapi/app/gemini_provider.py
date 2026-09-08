@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 
+import httpx
 from fastapi import HTTPException
 
 from .agent import PlanRequest, PlanResponse
@@ -28,6 +29,10 @@ from .llm_common import (
 )
 
 DEFAULT_MODEL = "gemini-2.0-flash"
+# Request timeout: milliseconds for the SDK `HttpOptions`, seconds for us.
+# Gemini answers faster than a local model (Ollama allows 90s); a hung call
+# must fail closed quickly so it can never block a demo or a worker.
+GEMINI_TIMEOUT_MS = 30_000
 
 
 class GeminiProvider:
@@ -50,7 +55,8 @@ class GeminiProvider:
         from google import genai  # type: ignore[import-not-found]
         from google.genai import types  # type: ignore[import-not-found]
 
-        client = genai.Client(api_key=self.api_key)
+        # `http_options` accepts a plain dict; `timeout` is milliseconds.
+        client = genai.Client(api_key=self.api_key, http_options={"timeout": GEMINI_TIMEOUT_MS})
 
         payload = {
             "taskObjective": request.taskObjective,
@@ -70,6 +76,13 @@ class GeminiProvider:
                     system_instruction=SYSTEM_INSTRUCTION,
                 ),
             )
+        except (TimeoutError, httpx.TimeoutException) as error:
+            # Distinct from generic outages: callers (and demos) can tell a slow
+            # model apart from a down one. Propagates untouched through main.py.
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "llm_timeout", "message": "Gemini did not respond in 30s"},
+            ) from error
         except Exception:
             raise GeminiUnavailableError() from None
 
@@ -79,7 +92,7 @@ class GeminiProvider:
 
         # POST-SCAN: the model's own output must never carry raw PII.
         post_scan(parsed)
-        return to_plan_response(parsed)
+        return to_plan_response(parsed, request.availableActions)
 
 
 def create_gemini_provider() -> GeminiProvider:

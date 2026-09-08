@@ -120,7 +120,7 @@ class OllamaProvider:
 
         # POST-SCAN: the local model's output must never carry raw PII either.
         post_scan(parsed)
-        return to_plan_response(parsed)
+        return to_plan_response(parsed, request.availableActions)
 
 
 def create_ollama_provider() -> OllamaProvider:

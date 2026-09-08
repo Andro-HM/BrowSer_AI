@@ -25,6 +25,10 @@ from .pii_scan import scan_pii
 
 SCROLL_AMOUNT = 720.0
 
+#: Full action vocabulary. Used as the allow-all default when a request leaves
+#: `availableActions` empty — the field only ever narrows this set, never widens it.
+ALL_ACTION_TYPES = ("CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE")
+
 
 class PlannedAction(BaseModel):
     type: Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
@@ -93,7 +97,19 @@ def post_scan(result: PlanResult) -> None:
         raise LLMPIILeakError()
 
 
-def to_plan_response(result: PlanResult) -> PlanResponse:
+def to_plan_response(
+    result: PlanResult, available_actions: list[str] | None = None
+) -> PlanResponse:
+    """Convert a model result, dropping actions outside `available_actions`.
+
+    An empty/missing allowlist means allow-all (the field only narrows). A
+    filtered-out action yields an empty action list — `PlanResponse` carries no
+    reason field, so nothing further is reported.
+    """
     if result.done or result.action is None:
         return PlanResponse(actions=[])
-    return PlanResponse(actions=[to_plan_action(result.action)])
+    action = to_plan_action(result.action)
+    allowed = available_actions if available_actions else list(ALL_ACTION_TYPES)
+    if action.action not in allowed:
+        return PlanResponse(actions=[])
+    return PlanResponse(actions=[action])
