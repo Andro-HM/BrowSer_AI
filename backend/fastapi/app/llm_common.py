@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .agent import (
     ClickAction,
@@ -31,14 +31,29 @@ ALL_ACTION_TYPES = ("CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE")
 
 
 class PlannedAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
-    controlId: str | None = None  # required for CLICK, TYPE, SELECT
+    controlId: str | None = Field(default=None, pattern=r"^CONTROL_[1-9]\d*$", max_length=64)
     value: str | None = None  # required for TYPE, SELECT (alias or benign text only)
     direction: Literal["up", "down"] | None = None  # required for SCROLL
     url: str | None = None  # required for NAVIGATE
 
+    @model_validator(mode="after")
+    def require_action_fields(self) -> "PlannedAction":
+        if self.type in ("CLICK", "TYPE", "SELECT") and self.controlId is None:
+            raise ValueError("controlId is required for targeted actions")
+        if self.type in ("TYPE", "SELECT") and not self.value:
+            raise ValueError("value is required for TYPE and SELECT")
+        if self.type == "SCROLL" and self.direction is None:
+            raise ValueError("direction is required for SCROLL")
+        if self.type == "NAVIGATE" and not self.url:
+            raise ValueError("url is required for NAVIGATE")
+        return self
+
 
 class PlanResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     action: PlannedAction | None = None
     done: bool
     reason: str
@@ -83,8 +98,8 @@ def post_scan(result: PlanResult) -> None:
     """Scan the model's own output for raw PII; raise `LLMPIILeakError` on a leak.
 
     Covers every model-controlled string that reaches the response: `reason`,
-    `value` (TYPE/SELECT payload), `selector` (CSS selectors can embed raw
-    values), and `url` (NAVIGATE targets can carry query-string PII).
+    `value` (TYPE/SELECT payload), `controlId`, and `url` (NAVIGATE targets can
+    carry query-string PII).
     """
     action = result.action
     leaked = scan_pii(

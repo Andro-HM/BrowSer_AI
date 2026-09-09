@@ -16,7 +16,7 @@ import re
 from urllib.parse import urlparse
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ALIAS_PATTERN = re.compile(r"^USER_[A-Z]+_\d+$")
 CONTROL_ID_PATTERN = r"^CONTROL_[1-9]\d*$"
@@ -56,12 +56,38 @@ class SanitizedNode(StrictModel):
 
 class AliasBinding(StrictModel):
     alias: str = Field(pattern=r"^USER_[A-Z]+_\d+$")
-    category: str
+    category: Literal[
+        "EMAIL", "PHONE", "NAME", "ADDRESS", "PASSWORD", "OTP",
+        "PAYMENT", "ID", "CUSTOM", "AADHAAR", "PAN", "UPI",
+    ]
 
 
 class ActionPolicy(StrictModel):
-    privacyMode: str
-    navigationAllowlist: list[str] = []
+    privacyMode: Literal["strict"]
+    navigationAllowlist: list[str] = Field(default_factory=list)
+
+    @field_validator("navigationAllowlist")
+    @classmethod
+    def require_https_origins(cls, values: list[str]) -> list[str]:
+        for value in values:
+            parsed = urlparse(value)
+            try:
+                port = parsed.port
+            except ValueError as error:
+                raise ValueError("navigation allowlist entries must be HTTPS origins") from error
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in ("", "/")
+                or parsed.params
+                or parsed.query
+                or parsed.fragment
+                or port is not None and not (0 < port < 65536)
+            ):
+                raise ValueError("navigation allowlist entries must be HTTPS origins")
+        return values
 
 
 class PlanRequest(StrictModel):
@@ -78,21 +104,44 @@ class PlanRequest(StrictModel):
     provider: Literal["deterministic", "gemini", "ollama"] | None = None
     policy: ActionPolicy
 
+    @field_validator("pageOrigin")
+    @classmethod
+    def require_page_origin(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        parsed = urlparse(value)
+        try:
+            _ = parsed.port
+        except ValueError as error:
+            raise ValueError("pageOrigin must be an origin") from error
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in ("", "/")
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("pageOrigin must be an origin")
+        return value
+
 
 class TypeAction(BaseModel):
     action: Literal["TYPE"]
-    target: str
+    target: str = Field(pattern=CONTROL_ID_PATTERN, max_length=64)
     value: str
 
 
 class ClickAction(BaseModel):
     action: Literal["CLICK"]
-    target: str
+    target: str = Field(pattern=CONTROL_ID_PATTERN, max_length=64)
 
 
 class SelectAction(BaseModel):
     action: Literal["SELECT"]
-    target: str
+    target: str = Field(pattern=CONTROL_ID_PATTERN, max_length=64)
     value: str
 
 

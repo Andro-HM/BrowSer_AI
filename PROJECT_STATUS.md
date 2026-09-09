@@ -39,6 +39,24 @@ this host has no `python` executable.**
   browser-session closure in `agent-task`; its serial rerun passed. Backend pytest remains
   unavailable because this host has no `python` executable.
 
+## M13 — Friend-2 integration audit boundary repairs
+
+**Status: extension gates and targeted browser paths PASS; backend pytest remains blocked
+by the absent Python runtime.**
+
+- Tightened the backend model-action contract so targeted provider actions require opaque
+  `CONTROL_n` identifiers and required action-specific fields.
+- Closed nested outbound-payload smuggling in the extension firewall: aliases and policy
+  are exact shapes, alias categories are allowlisted, and navigation entries are HTTPS
+  origins only. Backend request validators now mirror those constraints and pre-scan
+  `inputType` and allowlist strings.
+- Added regressions for nested-payload rejection and DOM execution after a visual-observer
+  failure. Gates run: typecheck, 362 Vitest tests, lint, build; serial agent/navigation
+  Playwright (2) and visual-perception Playwright (8) — PASS.
+- Remaining validation: backend pytest and live Gemini/Ollama calls require a Python
+  runtime and configured providers. The all-suite serial Playwright invocation exceeded
+  the bounded command window after starting 15 of 24 tests, so it is not reported as PASS.
+
 
 ---
 

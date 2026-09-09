@@ -39,6 +39,20 @@ const MAX_TEXT_LENGTH = 100_000;
 const MAX_NODES = 500;
 const MAX_ALIASES = 100;
 const ALIAS_PATTERN = /^USER_[A-Z]+_\d+$/;
+const ALIAS_CATEGORIES = new Set([
+  'EMAIL',
+  'PHONE',
+  'NAME',
+  'ADDRESS',
+  'PASSWORD',
+  'OTP',
+  'PAYMENT',
+  'ID',
+  'CUSTOM',
+  'AADHAAR',
+  'PAN',
+  'UPI',
+]);
 
 const REQUEST_KEYS = new Set([
   'taskObjective',
@@ -72,7 +86,18 @@ function isValidNode(node: unknown): boolean {
   }
   if (n['belowFold'] !== undefined && typeof n['belowFold'] !== 'boolean') return false;
   for (const key of Object.keys(n)) {
-    if (!['tag', 'controlId', 'inputType', 'label', 'name', 'filled', 'disabled', 'belowFold'].includes(key)) {
+    if (
+      ![
+        'tag',
+        'controlId',
+        'inputType',
+        'label',
+        'name',
+        'filled',
+        'disabled',
+        'belowFold',
+      ].includes(key)
+    ) {
       return false;
     }
   }
@@ -87,10 +112,36 @@ function isValidNode(node: unknown): boolean {
 function payloadContainsDetectablePII(request: RemoteAgentRequest): boolean {
   const texts: string[] = [request.sanitizedVisibleText, request.taskObjective];
   for (const node of request.sanitizedPageStructure) {
+    if (node.inputType !== undefined) texts.push(node.inputType);
     if (node.label !== undefined) texts.push(node.label);
     if (node.name !== undefined) texts.push(node.name);
   }
   return texts.some((text) => detectPII(text).length > 0);
+}
+
+function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  const actual = Object.keys(value);
+  return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
+/** Navigation configuration is an origin list, never arbitrary URL/page content. */
+function isHttpsOrigin(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.hostname.length > 0 &&
+      parsed.username === '' &&
+      parsed.password === '' &&
+      parsed.pathname === '/' &&
+      parsed.search === '' &&
+      parsed.hash === ''
+    );
+  } catch {
+    return false;
+  }
 }
 
 const MEDIA_DATA_URL = /data:(?:image|video|audio)\//i;
@@ -98,6 +149,7 @@ const BASE64_RUN = /[A-Za-z0-9+/]{256,}={0,2}/;
 function containsPixelPayload(request: RemoteAgentRequest): boolean {
   const texts: string[] = [request.sanitizedVisibleText, request.taskObjective];
   for (const node of request.sanitizedPageStructure) {
+    if (node.inputType !== undefined) texts.push(node.inputType);
     if (node.label !== undefined) texts.push(node.label);
     if (node.name !== undefined) texts.push(node.name);
   }
@@ -118,14 +170,22 @@ export function createPrivacyFirewall(): PrivacyFirewall {
 
       const r = request as unknown as Record<string, unknown>;
       // `pageOrigin` is OPTIONAL (origin-only when present); every other key is required.
-      const required = [...REQUEST_KEYS].filter((key) => key !== 'pageOrigin' && key !== 'provider');
+      const required = [...REQUEST_KEYS].filter(
+        (key) => key !== 'pageOrigin' && key !== 'provider',
+      );
       const missing = required.filter((key) => !(key in r));
       if (missing.length > 0) return Promise.resolve(deny('FIREWALL_MALFORMED'));
 
-      if (typeof r['taskObjective'] !== 'string' || (r['taskObjective'] as string).length > MAX_TASK_LENGTH) {
+      if (
+        typeof r['taskObjective'] !== 'string' ||
+        (r['taskObjective'] as string).length > MAX_TASK_LENGTH
+      ) {
         return Promise.resolve(deny('FIREWALL_MALFORMED'));
       }
-      if (typeof r['sanitizedVisibleText'] !== 'string' || (r['sanitizedVisibleText'] as string).length > MAX_TEXT_LENGTH) {
+      if (
+        typeof r['sanitizedVisibleText'] !== 'string' ||
+        (r['sanitizedVisibleText'] as string).length > MAX_TEXT_LENGTH
+      ) {
         return Promise.resolve(deny('FIREWALL_MALFORMED'));
       }
 
@@ -140,11 +200,11 @@ export function createPrivacyFirewall(): PrivacyFirewall {
         aliases.length > MAX_ALIASES ||
         !aliases.every(
           (a) =>
-            typeof a === 'object' &&
-            a !== null &&
-            typeof (a as Record<string, unknown>)['alias'] === 'string' &&
-            ALIAS_PATTERN.test((a as Record<string, unknown>)['alias'] as string) &&
-            typeof (a as Record<string, unknown>)['category'] === 'string',
+            isExactObject(a, ['alias', 'category']) &&
+            typeof a['alias'] === 'string' &&
+            ALIAS_PATTERN.test(a['alias']) &&
+            typeof a['category'] === 'string' &&
+            ALIAS_CATEGORIES.has(a['category']),
         )
       ) {
         return Promise.resolve(deny('FIREWALL_BAD_ALIAS'));
@@ -153,7 +213,9 @@ export function createPrivacyFirewall(): PrivacyFirewall {
       const availableActions = r['availableActions'];
       if (
         !Array.isArray(availableActions) ||
-        !availableActions.every((kind) => (ALLOWED_ACTION_KINDS as readonly string[]).includes(kind as string))
+        !availableActions.every((kind) =>
+          (ALLOWED_ACTION_KINDS as readonly string[]).includes(kind as string),
+        )
       ) {
         return Promise.resolve(deny('FIREWALL_BAD_ACTIONS'));
       }
@@ -174,7 +236,13 @@ export function createPrivacyFirewall(): PrivacyFirewall {
         if (typeof r['pageOrigin'] !== 'string') return Promise.resolve(deny('FIREWALL_MALFORMED'));
         try {
           const parsed = new URL(r['pageOrigin'] as string);
-          if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') {
+          if (
+            parsed.pathname !== '/' ||
+            parsed.search !== '' ||
+            parsed.hash !== '' ||
+            parsed.username !== '' ||
+            parsed.password !== ''
+          ) {
             return Promise.resolve(deny('FIREWALL_MALFORMED'));
           }
         } catch {
@@ -184,10 +252,10 @@ export function createPrivacyFirewall(): PrivacyFirewall {
 
       const policy = r['policy'];
       if (
-        typeof policy !== 'object' ||
-        policy === null ||
-        typeof (policy as Record<string, unknown>)['privacyMode'] !== 'string' ||
-        !Array.isArray((policy as Record<string, unknown>)['navigationAllowlist'])
+        !isExactObject(policy, ['privacyMode', 'navigationAllowlist']) ||
+        policy['privacyMode'] !== 'strict' ||
+        !Array.isArray(policy['navigationAllowlist']) ||
+        !policy['navigationAllowlist'].every(isHttpsOrigin)
       ) {
         return Promise.resolve(deny('FIREWALL_MALFORMED'));
       }

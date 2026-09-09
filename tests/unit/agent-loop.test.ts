@@ -421,6 +421,40 @@ describe('agent loop (deterministic, in-extension)', () => {
     expect(plan).not.toHaveBeenCalled();
   });
 
+  it('continues the normal DOM path when visual observation is unavailable', async () => {
+    const page = fakePage();
+    const baseScan = page.scan;
+    page.scan = async () => ({
+      ...(await baseScan()),
+      snapshot: {
+        url: 'https://form.test/',
+        viewport: { width: 1280, height: 800 },
+        domTextLength: 100,
+        candidates: [],
+      },
+    });
+    const vault = createLocalVault();
+    const observeVisual = vi.fn(async () => {
+      throw new Error('capture unavailable');
+    });
+
+    const result = await runAgentLoop({
+      task: 'fill the form with my details and submit',
+      sessionId: 'visual-fallback-session',
+      vault,
+      gateway: createDeterministicPlanner(),
+      bridge: createActionBridge({ vault, sendToPage: page.executor }),
+      firewall: createPrivacyFirewall(),
+      scan: page.scan,
+      observeVisual,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(page.state.email).toBe(CANARY_EMAIL);
+    expect(page.state.phone).toBe(CANARY_PHONE);
+    expect(observeVisual).toHaveBeenCalled();
+  });
+
   it('rejects an empty task', async () => {
     const page = fakePage();
     const { run } = buildLoop(page, '   ');

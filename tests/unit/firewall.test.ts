@@ -89,6 +89,31 @@ describe('privacy firewall', () => {
     expect((await firewall.inspect(badActions)).reason).toBe('FIREWALL_BAD_ACTIONS');
   });
 
+  it('rejects nested payload smuggling and non-origin navigation entries', async () => {
+    const firewall = createPrivacyFirewall();
+    const aliasSmuggling = cleanRequest({
+      aliases: [{ alias: 'USER_EMAIL_1', category: 'EMAIL', raw: 'CANARY_EMAIL_001@example.test' } as never],
+    });
+    expect((await firewall.inspect(aliasSmuggling)).reason).toBe('FIREWALL_BAD_ALIAS');
+
+    const policySmuggling = cleanRequest({
+      policy: {
+        privacyMode: 'strict',
+        navigationAllowlist: [],
+        raw: 'CANARY_EMAIL_001@example.test',
+      } as never,
+    });
+    expect((await firewall.inspect(policySmuggling)).reason).toBe('FIREWALL_MALFORMED');
+
+    const piiInAllowlist = cleanRequest({
+      policy: {
+        privacyMode: 'strict',
+        navigationAllowlist: ['https://example.test/?email=CANARY_EMAIL_001@example.test'],
+      },
+    });
+    expect((await firewall.inspect(piiInAllowlist)).reason).toBe('FIREWALL_MALFORMED');
+  });
+
   it('accepts an optional provider hint and rejects unknown providers', async () => {
     const firewall = createPrivacyFirewall();
     for (const provider of ['gemini', 'ollama', 'deterministic'] as const) {

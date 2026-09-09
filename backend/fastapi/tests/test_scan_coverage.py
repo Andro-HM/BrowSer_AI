@@ -1,12 +1,14 @@
 """Scan-coverage regression tests: every model- and client-controlled string is
 PII-scanned in both directions.
 
-- POST-SCAN (`llm_common.post_scan`): reason + value (existing) + selector + url.
+- POST-SCAN (`llm_common.post_scan`): reason + value + controlId + url.
   A leak anywhere → 502 via the Gemini provider (mocked client, no network).
 - PRE-SCAN (`main.plan`): taskObjective + visibleText + struct fields (existing)
   + pageOrigin. A leak anywhere → 422 before any provider runs.
 """
 
+import pytest
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 from unittest.mock import Mock, patch
 
@@ -49,20 +51,9 @@ def _mock_gemini(parsed: PlanResult) -> Mock:
     return client_mock
 
 
-def test_pii_in_action_control_id_gives_502(monkeypatch):
-    monkeypatch.setenv("AGENT_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    mock = _mock_gemini(
-        PlanResult(
-            action=PlannedAction(type="CLICK", controlId="CONTROL_user@test.com"),
-            done=False,
-            reason="clicking the field",
-        )
-    )
-    with patch("google.genai.Client", return_value=mock):
-        response = client.post("/v1/plan", json=_clean_request(provider="gemini"))
-    assert response.status_code == 502
-    assert response.json()["detail"] == "PII leak detected in LLM response"
+def test_model_action_rejects_nonopaque_control_id():
+    with pytest.raises(ValidationError):
+        PlannedAction(type="CLICK", controlId="[name='CANARY_EMAIL_001@example.test']")
 
 
 def test_pii_in_action_url_gives_502(monkeypatch):

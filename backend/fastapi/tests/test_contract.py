@@ -54,3 +54,25 @@ def test_invalid_body_does_not_echo_sensitive_input():
     response = client.post("/v1/plan", json={**EXAMPLE_REQUEST, "screenshot": canary})
     assert response.status_code == 422
     assert canary not in response.text
+
+
+def test_nested_privacy_fields_reject_sensitive_payloads_before_planning():
+    canary = "CANARY_EMAIL_001@example.test"
+    nested_alias = {
+        **EXAMPLE_REQUEST,
+        "aliases": [{"alias": "USER_EMAIL_1", "category": "EMAIL", "raw": canary}],
+    }
+    alias_response = client.post("/v1/plan", json=nested_alias)
+    assert alias_response.status_code == 422
+    assert canary not in alias_response.text
+
+    allowlist_payload = {
+        **EXAMPLE_REQUEST,
+        "policy": {
+            "privacyMode": "strict",
+            "navigationAllowlist": [f"https://example.test/?email={canary}"],
+        },
+    }
+    allowlist_response = client.post("/v1/plan", json=allowlist_payload)
+    assert allowlist_response.status_code == 422
+    assert canary not in allowlist_response.text

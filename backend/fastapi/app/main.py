@@ -94,7 +94,7 @@ def _plan_impl(payload: PlanRequest) -> dict:
     # PRE-SCAN (inbound): raw PII must never reach ANY provider.
     # Covers the top-level text plus every free-text struct field that can carry
     # a raw value past the sanitizer: alias bindings and all node strings
-    # (selector/label/name). NOTE: PlanRequest has no `pageContext`/`reason`
+    # (controlId/inputType/label/name). NOTE: PlanRequest has no `pageContext`/`reason`
     # fields — the LLM result `reason` is covered by the provider POST-SCAN.
     struct_texts: list[str] = []
     for binding in payload.aliases:
@@ -102,6 +102,8 @@ def _plan_impl(payload: PlanRequest) -> dict:
         struct_texts.append(binding.category)
     for node in payload.sanitizedPageStructure:
         struct_texts.append(node.controlId)
+        if node.inputType is not None:
+            struct_texts.append(node.inputType)
         if node.label is not None:
             struct_texts.append(node.label)
         if node.name is not None:
@@ -109,6 +111,7 @@ def _plan_impl(payload: PlanRequest) -> dict:
     # pageOrigin is a URL: query strings can smuggle raw PII (?email=user@x.com).
     if payload.pageOrigin is not None:
         struct_texts.append(payload.pageOrigin)
+    struct_texts.extend(payload.policy.navigationAllowlist)
     if scan_pii(payload.taskObjective, payload.sanitizedVisibleText, *struct_texts):
         raise HTTPException(status_code=422, detail="Raw PII detected in outbound request")
     if contains_pixel_payload(payload.taskObjective, payload.sanitizedVisibleText, *struct_texts):
