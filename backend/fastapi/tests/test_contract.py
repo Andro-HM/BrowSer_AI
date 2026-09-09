@@ -42,11 +42,16 @@ def test_docs_example_returns_valid_action_plan():
     ]
 
 
-def test_docs_example_rejected_without_strict_mode():
-    payload = {**EXAMPLE_REQUEST, "policy": {"privacyMode": "permissive", "navigationAllowlist": []}}
+def test_docs_example_rejected_without_strict_mode_without_echoing_input():
+    canary = "CANARY_PRIVACY_MODE_001@example.test"
+    payload = {**EXAMPLE_REQUEST, "policy": {"privacyMode": canary, "navigationAllowlist": []}}
     response = client.post("/v1/plan", json=payload)
     assert response.status_code == 422
-    assert response.json()["detail"] == {"error": "invalid_privacy_mode", "allowed": ["strict"]}
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert any(item["loc"] == ["body", "policy", "privacyMode"] for item in detail)
+    assert all(set(item) == {"type", "loc", "msg"} for item in detail)
+    assert canary not in response.text
 
 
 def test_invalid_body_does_not_echo_sensitive_input():

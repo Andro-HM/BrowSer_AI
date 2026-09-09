@@ -3,8 +3,10 @@ PII-scanned in both directions.
 
 - POST-SCAN (`llm_common.post_scan`): reason + value + controlId + url.
   A leak anywhere → 502 via the Gemini provider (mocked client, no network).
-- PRE-SCAN (`main.plan`): taskObjective + visibleText + struct fields (existing)
-  + pageOrigin. A leak anywhere → 422 before any provider runs.
+- PRE-SCAN (`main.plan`): taskObjective + visibleText + struct fields (existing).
+  A leak anywhere → 422 before any provider runs.
+- REQUEST VALIDATION (`agent.PlanRequest`): pageOrigin must be an origin. Invalid
+  values are rejected without reflecting submitted content.
 """
 
 import pytest
@@ -72,13 +74,18 @@ def test_pii_in_action_url_gives_502(monkeypatch):
     assert response.json()["detail"] == "PII leak detected in LLM response"
 
 
-def test_pii_in_page_origin_gives_422():
+def test_non_origin_page_origin_is_rejected_without_echoing_input():
+    canary = "CANARY_EMAIL_001@example.test"
     response = client.post(
         "/v1/plan",
-        json=_clean_request(pageOrigin="https://app.test/?email=user@example.test"),
+        json=_clean_request(pageOrigin=f"https://app.test/?email={canary}"),
     )
     assert response.status_code == 422
-    assert "Raw PII detected" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert any(item["loc"] == ["body", "pageOrigin"] for item in detail)
+    assert all(set(item) == {"type", "loc", "msg"} for item in detail)
+    assert canary not in response.text
 
 
 def test_clean_request_and_response_gives_200(monkeypatch):
