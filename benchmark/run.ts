@@ -34,6 +34,7 @@ export interface PlantedItem {
 
 export interface RawField {
   tag: 'input' | 'textarea' | 'select' | 'button';
+  /** Benchmark-only local identity; never copied to a FieldStructure or request. */
   selector: string;
   inputType?: string;
   label?: string;
@@ -258,10 +259,11 @@ export async function runLeakageProbe(page: PageFixture): Promise<LeakageProbeRe
       .filter((part) => part.length > 0)
       .join('\n'),
     snapshot: null,
-    structure: page.structure.map((field) => ({
+    structure: page.structure.map(({ selector: _selector, ...field }, index) => ({
       ...field,
+      control: `CONTROL_${index + 1}` as const,
       disabled: field.tag === 'button' && submitted,
-      value: values.get(field.selector) || undefined,
+      value: values.get(_selector) || undefined,
     })) satisfies FieldStructure[],
   });
 

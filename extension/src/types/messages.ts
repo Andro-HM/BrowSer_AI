@@ -1,7 +1,7 @@
 // Runtime message contracts shared between the background worker and the side panel.
 // Kept separate from contracts.ts, which is types-only, because these are values.
 
-import type { AgentAction, DomVisualSnapshot } from './contracts';
+import type { AgentAction, ControlHandle, DomVisualSnapshot } from './contracts';
 
 /** M3 — request cheap DOM visual-candidate metadata for the active tab. */
 export const COLLECT_VISUAL_CANDIDATES = 'COLLECT_VISUAL_CANDIDATES';
@@ -52,8 +52,8 @@ export interface ScanPageResponse {
  */
 export interface FieldStructure {
   tag: 'input' | 'textarea' | 'select' | 'button';
-  /** Deterministic CSS selector (id → name → injected `data-priv-idx` attribute). */
-  selector: string;
+  /** Opaque, scan-local handle. Its Element mapping stays in the content script. */
+  control: ControlHandle;
   id?: string;
   name?: string;
   inputType?: string;

@@ -7,9 +7,9 @@ import {
 
 describe('action schema validation', () => {
   it('accepts each valid action shape', () => {
-    expect(validateActionSchema({ action: 'CLICK', target: '#a' }).valid).toBe(true);
-    expect(validateActionSchema({ action: 'TYPE', target: '#a', value: 'USER_EMAIL_1' }).valid).toBe(true);
-    expect(validateActionSchema({ action: 'SELECT', target: '#a', value: 'x' }).valid).toBe(true);
+    expect(validateActionSchema({ action: 'CLICK', target: 'CONTROL_1' }).valid).toBe(true);
+    expect(validateActionSchema({ action: 'TYPE', target: 'CONTROL_1', value: 'USER_EMAIL_1' }).valid).toBe(true);
+    expect(validateActionSchema({ action: 'SELECT', target: 'CONTROL_1', value: 'x' }).valid).toBe(true);
     expect(validateActionSchema({ action: 'SCROLL', amount: 300 }).valid).toBe(true);
     expect(validateActionSchema({ action: 'NAVIGATE', url: 'https://a.test/x' }).valid).toBe(true);
   });
@@ -17,15 +17,15 @@ describe('action schema validation', () => {
   it('rejects non-objects, unknown kinds, and missing fields', () => {
     expect(validateActionSchema(null).valid).toBe(false);
     expect(validateActionSchema('CLICK').valid).toBe(false);
-    expect(validateActionSchema({ action: 'EVAL', target: '#a' }).valid).toBe(false);
+    expect(validateActionSchema({ action: 'EVAL', target: 'CONTROL_1' }).valid).toBe(false);
     expect(validateActionSchema({ action: 'CLICK' }).reason).toBe('SCHEMA_TARGET_REQUIRED');
-    expect(validateActionSchema({ action: 'TYPE', target: '#a' }).reason).toBe('SCHEMA_VALUE_REQUIRED');
+    expect(validateActionSchema({ action: 'TYPE', target: 'CONTROL_1' }).reason).toBe('SCHEMA_VALUE_REQUIRED');
     expect(validateActionSchema({ action: 'SCROLL', amount: 'x' }).valid).toBe(false);
     expect(validateActionSchema({ action: 'NAVIGATE' }).valid).toBe(false);
   });
 
   it('rejects unexpected extra fields (no payload smuggling)', () => {
-    const result = validateActionSchema({ action: 'CLICK', target: '#a', js: 'alert(1)' });
+    const result = validateActionSchema({ action: 'CLICK', target: 'CONTROL_1', js: 'alert(1)' });
     expect(result.valid).toBe(false);
     expect(result.reason).toBe('SCHEMA_UNEXPECTED_FIELD');
   });
@@ -34,7 +34,7 @@ describe('action schema validation', () => {
 describe('action policy validation', () => {
   it('always accepts alias-shaped TYPE values', () => {
     const result = validateActionPolicy(
-      { action: 'TYPE', target: '#a', value: 'USER_EMAIL_1' },
+      { action: 'TYPE', target: 'CONTROL_1', value: 'USER_EMAIL_1' },
       DEFAULT_ACTION_POLICY,
     );
     expect(result.valid).toBe(true);
@@ -42,7 +42,7 @@ describe('action policy validation', () => {
 
   it('rejects TYPE values that contain detectable PII', () => {
     const result = validateActionPolicy(
-      { action: 'TYPE', target: '#a', value: 'CANARY_EMAIL_001@example.test' },
+      { action: 'TYPE', target: 'CONTROL_1', value: 'CANARY_EMAIL_001@example.test' },
       DEFAULT_ACTION_POLICY,
     );
     expect(result.valid).toBe(false);
@@ -51,7 +51,7 @@ describe('action policy validation', () => {
 
   it('accepts clean literal values', () => {
     const result = validateActionPolicy(
-      { action: 'TYPE', target: '#a', value: 'hello world' },
+      { action: 'TYPE', target: 'CONTROL_1', value: 'hello world' },
       DEFAULT_ACTION_POLICY,
     );
     expect(result.valid).toBe(true);
@@ -92,5 +92,13 @@ describe('action policy validation', () => {
     expect(validateActionPolicy({ action: 'SCROLL', amount: 999_999 }, DEFAULT_ACTION_POLICY).reason).toBe(
       'POLICY_SCROLL_TOO_LARGE',
     );
+  });
+
+  it('rejects selector-like and malformed control targets', () => {
+    expect(validateActionSchema({ action: 'CLICK', target: '#submit' }).reason).toBe('SCHEMA_CONTROL_INVALID');
+    expect(validateActionSchema({ action: 'TYPE', target: '[name="alice@example.test"]', value: 'x' }).reason)
+      .toBe('SCHEMA_CONTROL_INVALID');
+    expect(validateActionPolicy({ action: 'CLICK', target: '#submit' }, DEFAULT_ACTION_POLICY).reason)
+      .toBe('POLICY_CONTROL_INVALID');
   });
 });

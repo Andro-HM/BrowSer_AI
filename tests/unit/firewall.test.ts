@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { createPrivacyFirewall } from '../../extension/src/firewall';
 import type { RemoteAgentRequest, SanitizedNode } from '../../extension/src/types/contracts';
 
-function node(partial: Partial<SanitizedNode> & { selector: string }): SanitizedNode {
+function node(partial: Partial<SanitizedNode> & { control: string }): SanitizedNode {
   return { tag: 'input', filled: false, disabled: false, ...partial };
 }
 
 function cleanRequest(partial: Partial<RemoteAgentRequest> = {}): RemoteAgentRequest {
   return {
     taskObjective: 'fill the form and submit',
-    sanitizedPageStructure: [node({ selector: '#email', inputType: 'email', label: 'Email' })],
+    sanitizedPageStructure: [node({ control: 'CONTROL_1', inputType: 'email', label: 'Email' })],
     sanitizedVisibleText: 'Email [SET] — welcome to the demo form',
     aliases: [{ alias: 'USER_EMAIL_1', category: 'EMAIL' }],
     availableActions: ['CLICK', 'TYPE', 'SELECT', 'SCROLL', 'NAVIGATE'],
@@ -35,7 +35,7 @@ describe('privacy firewall', () => {
     const verdict = await createPrivacyFirewall().inspect(
       cleanRequest({
         sanitizedPageStructure: [
-          node({ selector: '#a', label: 'Owner: 555-123-4567' }),
+          node({ control: 'CONTROL_1', label: 'Owner: 555-123-4567' }),
         ],
       }),
     );
@@ -64,6 +64,18 @@ describe('privacy firewall', () => {
     expect((await firewall.inspect(null as unknown as RemoteAgentRequest)).allowed).toBe(false);
     const partial = { taskObjective: 'x' } as unknown as RemoteAgentRequest;
     expect((await firewall.inspect(partial)).reason).toBe('FIREWALL_MALFORMED');
+  });
+
+  it('refuses selector fields and malformed opaque controls', async () => {
+    const selectorSmuggle = cleanRequest() as unknown as { sanitizedPageStructure: Record<string, unknown>[] };
+    selectorSmuggle.sanitizedPageStructure[0]!['selector'] = '[name="alice@example.test"]';
+    expect((await createPrivacyFirewall().inspect(selectorSmuggle as unknown as RemoteAgentRequest)).reason)
+      .toBe('FIREWALL_MALFORMED');
+
+    const badControl = cleanRequest({
+      sanitizedPageStructure: [{ tag: 'input', control: '#email', filled: false, disabled: false }],
+    });
+    expect((await createPrivacyFirewall().inspect(badControl)).reason).toBe('FIREWALL_MALFORMED');
   });
 
   it('fails closed on bad alias grammar and bad availableActions', async () => {

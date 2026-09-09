@@ -41,7 +41,7 @@ SCROLL_AMOUNT = 720.0
 
 class PlannedAction(BaseModel):
     type: Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
-    selector: str | None = None  # required for CLICK, TYPE, SELECT
+    control: str | None = None  # opaque CONTROL_n; required for CLICK, TYPE, SELECT
     value: str | None = None  # required for TYPE, SELECT (alias or benign text only)
     direction: Literal["up", "down"] | None = None  # required for SCROLL
     url: str | None = None  # required for NAVIGATE
@@ -61,6 +61,7 @@ SYSTEM_INSTRUCTION = (
     "- NEVER invent or output real personal information.\n"
     "- Use ONLY the provided aliases when filling sensitive fields.\n"
     "- Action types MUST BE EXACTLY ONE OF: CLICK, TYPE, SELECT, SCROLL, NAVIGATE.\n"
+    "- For CLICK, TYPE, and SELECT, use an exact provided opaque CONTROL_n handle.\n"
     "- If the task is completed, return action: null and done: true.\n"
     "- If no safe action can be determined, return action: null and done: true."
 )
@@ -77,11 +78,11 @@ class GeminiPIILeakError(Exception):
 def _to_plan_action(action: PlannedAction) -> PlanAction:
     kind = action.type
     if kind == "CLICK":
-        return ClickAction(action="CLICK", target=action.selector or "")
+        return ClickAction(action="CLICK", target=action.control or "")
     if kind == "TYPE":
-        return TypeAction(action="TYPE", target=action.selector or "", value=action.value or "")
+        return TypeAction(action="TYPE", target=action.control or "", value=action.value or "")
     if kind == "SELECT":
-        return SelectAction(action="SELECT", target=action.selector or "", value=action.value or "")
+        return SelectAction(action="SELECT", target=action.control or "", value=action.value or "")
     if kind == "SCROLL":
         amount = SCROLL_AMOUNT if action.direction == "down" else -SCROLL_AMOUNT
         return ScrollAction(action="SCROLL", amount=amount)

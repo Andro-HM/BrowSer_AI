@@ -41,7 +41,7 @@ function isField(node: SanitizedNode): boolean {
 }
 
 function matchesCategory(node: SanitizedNode, keywords: readonly string[]): boolean {
-  const haystack = `${node.inputType ?? ''} ${node.name ?? ''} ${node.label ?? ''}`.toLowerCase();
+  const haystack = `${node.inputType ?? ''} ${node.label ?? ''}`.toLowerCase();
   return keywords.some((keyword) => haystack.includes(keyword));
 }
 
@@ -68,7 +68,7 @@ export function planDeterministic(request: RemoteAgentRequest): AgentAction[] {
     );
     if (field) {
       if (field.belowFold === true) return [{ action: 'SCROLL', amount: SCROLL_STEP }];
-      return [{ action: 'TYPE', target: field.selector, value: binding.alias }];
+      return [{ action: 'TYPE', target: field.control, value: binding.alias }];
     }
   }
 
@@ -79,7 +79,7 @@ export function planDeterministic(request: RemoteAgentRequest): AgentAction[] {
     );
     if (submit) {
       if (submit.belowFold === true) return [{ action: 'SCROLL', amount: SCROLL_STEP }];
-      return [{ action: 'CLICK', target: submit.selector }];
+      return [{ action: 'CLICK', target: submit.control }];
     }
   }
 

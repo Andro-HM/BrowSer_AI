@@ -26,17 +26,17 @@ function fakePage() {
       .join('\n'),
     snapshot: null,
     structure: [
-      { tag: 'input', selector: '#email', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
-      { tag: 'input', selector: '#phone', inputType: 'tel', name: 'phone', label: 'Phone', value: state.phone || undefined, disabled: false },
-      { tag: 'button', selector: '#submit', label: 'Submit', disabled: state.submitDisabled },
+      { tag: 'input', control: 'CONTROL_1', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
+      { tag: 'input', control: 'CONTROL_2', inputType: 'tel', name: 'phone', label: 'Phone', value: state.phone || undefined, disabled: false },
+      { tag: 'button', control: 'CONTROL_3', label: 'Submit', disabled: state.submitDisabled },
     ] satisfies FieldStructure[],
   });
 
   /** The "page": a resolved TYPE writes the real value; CLICK disables the button. */
   const executor = async (action: AgentAction) => {
-    if (action.action === 'TYPE' && action.target === '#email') state.email = action.value;
-    else if (action.action === 'TYPE' && action.target === '#phone') state.phone = action.value;
-    else if (action.action === 'CLICK' && action.target === '#submit') state.submitDisabled = true;
+    if (action.action === 'TYPE' && action.target === 'CONTROL_1') state.email = action.value;
+    else if (action.action === 'TYPE' && action.target === 'CONTROL_2') state.phone = action.value;
+    else if (action.action === 'CLICK' && action.target === 'CONTROL_3') state.submitDisabled = true;
     else return { ok: false, code: 'NOT_FOUND' };
     return { ok: true, code: 'OK' };
   };
@@ -133,7 +133,7 @@ describe('agent loop (deterministic, in-extension)', () => {
     failing.scan = async () => ({
       pageText: `Reach me at ${CANARY_EMAIL}`,
       snapshot: null,
-      structure: [{ tag: 'input', selector: '#email', inputType: 'email', label: 'Email', disabled: false }],
+      structure: [{ tag: 'input', control: 'CONTROL_99', inputType: 'email', label: 'Email', disabled: false }],
     });
     // Use the real loop with a gateway that throws — planner failures stop the loop.
     const vault = createLocalVault();
@@ -153,7 +153,7 @@ describe('agent loop (deterministic, in-extension)', () => {
     rejecting.scan = async () => ({
       pageText: `Reach me at ${CANARY_EMAIL}`,
       snapshot: null,
-      structure: [{ tag: 'input', selector: '#missing', inputType: 'email', label: 'Email', disabled: false }],
+      structure: [{ tag: 'input', control: 'CONTROL_99', inputType: 'email', label: 'Email', disabled: false }],
     });
     // ONE shared vault between loop (writes aliases) and bridge (resolves them) — the
     // same constraint the panel must honor.
@@ -193,7 +193,7 @@ describe('agent loop (deterministic, in-extension)', () => {
       task: 'fill the form',
       sessionId: 's',
       vault: createLocalVault(),
-      gateway: { plan: async () => [{ action: 'TYPE', target: '#email', value: 'hello' }]},
+      gateway: { plan: async () => [{ action: 'TYPE', target: 'CONTROL_1', value: 'hello' }]},
       bridge: createActionBridge({ vault: createLocalVault(), sendToPage: async () => ({ ok: true, code: 'OK' }) }),
       firewall: createPrivacyFirewall(),
       scan: scrolling.scan,
@@ -219,7 +219,7 @@ describe('agent loop (deterministic, in-extension)', () => {
           structure: [
             {
               tag: 'input',
-              selector: '#email',
+              control: 'CONTROL_1',
               inputType: 'email',
               label: 'Email',
               value: state.email || undefined,
@@ -228,7 +228,7 @@ describe('agent loop (deterministic, in-extension)', () => {
             },
             {
               tag: 'button',
-              selector: '#submit',
+              control: 'CONTROL_2',
               label: 'Submit',
               disabled: state.submitted,
               belowFold: 1750 - page.scrollY >= 800,
@@ -241,11 +241,11 @@ describe('agent loop (deterministic, in-extension)', () => {
           page.scrollY += action.amount;
           return { ok: true, code: 'OK' };
         }
-        if (action.action === 'TYPE' && action.target === '#email') {
+        if (action.action === 'TYPE' && action.target === 'CONTROL_1') {
           state.email = action.value;
           return { ok: true, code: 'OK' };
         }
-        if (action.action === 'CLICK' && action.target === '#submit') {
+        if (action.action === 'CLICK' && action.target === 'CONTROL_2') {
           state.submitted = true;
           return { ok: true, code: 'OK' };
         }
@@ -289,7 +289,7 @@ describe('agent loop (deterministic, in-extension)', () => {
           ? [
               {
                 tag: 'input',
-                selector: '#email',
+                control: 'CONTROL_1',
                 inputType: 'email',
                 label: 'Email',
                 value: state.email || undefined,
@@ -314,7 +314,7 @@ describe('agent loop (deterministic, in-extension)', () => {
             url = action.url;
             return { ok: true, code: 'OK' };
           }
-          if (action.action === 'TYPE' && action.target === '#email') {
+          if (action.action === 'TYPE' && action.target === 'CONTROL_1') {
             state.email = action.value;
             return { ok: true, code: 'OK' };
           }
@@ -340,14 +340,15 @@ describe('agent loop (deterministic, in-extension)', () => {
 });
 
 describe('toSanitizedNodes', () => {
-  it('gates labels/names through the PII detector and never carries values', () => {
+  it('gates labels through the PII detector and never carries values or field names', () => {
     const nodes = toSanitizedNodes([
-      { tag: 'input', selector: '#a', label: 'Email', name: 'email', value: CANARY_EMAIL, disabled: false },
-      { tag: 'input', selector: '#b', label: `Owner ${CANARY_EMAIL}`, value: 'typed text', disabled: false },
-      { tag: 'button', selector: '#c', label: 'Submit', disabled: false },
+      { tag: 'input', control: 'CONTROL_1', label: 'Email', name: 'email', value: CANARY_EMAIL, disabled: false },
+      { tag: 'input', control: 'CONTROL_2', label: `Owner ${CANARY_EMAIL}`, value: 'typed text', disabled: false },
+      { tag: 'button', control: 'CONTROL_3', label: 'Submit', disabled: false },
     ]);
     const [plain, gated, button] = nodes;
-    expect(plain).toMatchObject({ selector: '#a', label: 'Email', name: 'email', filled: true });
+    expect(plain).toMatchObject({ control: 'CONTROL_1', label: 'Email', filled: true });
+    expect(plain).not.toHaveProperty('name');
     expect(plain).not.toHaveProperty('value');
     expect(gated?.label).toBeUndefined();
     expect(gated?.filled).toBe(true);
@@ -360,6 +361,24 @@ describe('toSanitizedNodes', () => {
   it('returns an empty list when the structure is missing or empty', () => {
     expect(toSanitizedNodes(undefined)).toEqual([]);
     expect(toSanitizedNodes([])).toEqual([]);
+  });
+
+  it('never serializes selector-relevant name/id canaries into the outbound structure', () => {
+    const serialized = JSON.stringify(toSanitizedNodes([
+      {
+        tag: 'input',
+        control: 'CONTROL_1',
+        id: 'CANARY_CREDENTIAL_001',
+        name: 'alice@example.test',
+        inputType: 'email',
+        disabled: false,
+      },
+    ]));
+
+    expect(serialized).toContain('CONTROL_1');
+    expect(serialized).not.toContain('alice@example.test');
+    expect(serialized).not.toContain('CANARY_CREDENTIAL_001');
+    expect(serialized).not.toContain('selector');
   });
 });
 

@@ -19,6 +19,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 ALIAS_PATTERN = re.compile(r"^USER_[A-Z]+_\d+$")
+CONTROL_HANDLE_PATTERN = r"^CONTROL_[1-9]\d*$"
 
 CATEGORY_FIELD_KEYWORDS: dict[str, tuple[str, ...]] = {
     "EMAIL": ("email",),
@@ -51,10 +52,9 @@ class StrictModel(BaseModel):
 
 class SanitizedNode(StrictModel):
     tag: Literal["input", "textarea", "select", "button"]
-    selector: str = Field(min_length=1, max_length=512)
+    control: str = Field(min_length=9, max_length=32, pattern=CONTROL_HANDLE_PATTERN)
     inputType: str | None = None
     label: str | None = None
-    name: str | None = None
     filled: bool
     disabled: bool
     belowFold: bool | None = None
@@ -136,7 +136,7 @@ def _is_field(node: SanitizedNode) -> bool:
 
 
 def _matches_category(node: SanitizedNode, keywords: tuple[str, ...]) -> bool:
-    haystack = f"{node.inputType or ''} {node.name or ''} {node.label or ''}".lower()
+    haystack = f"{node.inputType or ''} {node.label or ''}".lower()
     return any(keyword in haystack for keyword in keywords)
 
 
@@ -162,7 +162,7 @@ class DeterministicPlanner:
                     and _matches_category(node, keywords)
                 ):
                     return PlanResponse(
-                        actions=[TypeAction(action="TYPE", target=node.selector, value=binding.alias)]
+                        actions=[TypeAction(action="TYPE", target=node.control, value=binding.alias)]
                     )
 
         if SUBMIT_TASK_VERBS.search(request.taskObjective):
@@ -175,7 +175,7 @@ class DeterministicPlanner:
                 ):
                     if node.belowFold:
                         return PlanResponse(actions=[ScrollAction(action="SCROLL", amount=720)])
-                    return PlanResponse(actions=[ClickAction(action="CLICK", target=node.selector)])
+                    return PlanResponse(actions=[ClickAction(action="CLICK", target=node.control)])
 
         match = re.search(
             r"\b(?:open|go to|navigate to|visit)\s+([a-z0-9-]+(?:\.[a-z0-9-]+)+)",

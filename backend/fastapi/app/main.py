@@ -50,7 +50,7 @@ def _text_bearing(request: PlanRequest) -> list[str | None]:
     """Every string in the request that could carry page-derived content.
 
     Scoped to what a provider actually SEES: the objective, the visible text, and each
-    node's `label`/`name` — all of which the Gemini provider serializes into the prompt.
+    node's `label` — all of which the Gemini provider serializes into the prompt.
     Scanning only the two top-level strings would leave the per-node text unchecked,
     which is precisely where a raw value would hide. Mirrors `textBearingStrings` in
     `extension/src/firewall/inspect.ts` so the two gates cover the same surface.
@@ -58,7 +58,6 @@ def _text_bearing(request: PlanRequest) -> list[str | None]:
     texts: list[str | None] = [request.taskObjective, request.sanitizedVisibleText]
     for node in request.sanitizedPageStructure:
         texts.append(node.label)
-        texts.append(node.name)
     return texts
 
 

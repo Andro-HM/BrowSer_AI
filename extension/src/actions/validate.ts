@@ -8,6 +8,7 @@
 import type { AgentAction, AgentActionKind } from '../types/contracts';
 import { ALLOWED_ACTION_KINDS } from './kinds';
 import { detectPII } from '../perception/pii';
+import { isControlHandle } from '../content/controls';
 
 export interface ValidationResult {
   valid: boolean;
@@ -36,7 +37,7 @@ export const DEFAULT_ACTION_POLICY: ActionPolicy = Object.freeze({
   maxScroll: 10_000,
 });
 
-const MAX_SELECTOR_LENGTH = 512;
+const MAX_CONTROL_HANDLE_LENGTH = 32;
 const MAX_TYPED_VALUE_LENGTH = 4096;
 const MAX_URL_LENGTH = 2048;
 const ALIAS_PATTERN = /^USER_[A-Z]+_\d+$/;
@@ -68,12 +69,14 @@ export function validateActionSchema(raw: unknown): ValidationResult {
       if (typeof action['target'] !== 'string' || action['target'].length === 0) {
         return fail('SCHEMA_TARGET_REQUIRED');
       }
+      if (!isControlHandle(action['target'])) return fail('SCHEMA_CONTROL_INVALID');
       break;
     case 'TYPE':
     case 'SELECT':
       if (typeof action['target'] !== 'string' || action['target'].length === 0) {
         return fail('SCHEMA_TARGET_REQUIRED');
       }
+      if (!isControlHandle(action['target'])) return fail('SCHEMA_CONTROL_INVALID');
       if (typeof action['value'] !== 'string' || action['value'].length === 0) {
         return fail('SCHEMA_VALUE_REQUIRED');
       }
@@ -119,12 +122,14 @@ export function validateActionPolicy(
 ): ValidationResult {
   switch (action.action) {
     case 'CLICK':
-      if (action.target.length > MAX_SELECTOR_LENGTH) return fail('POLICY_TARGET_TOO_LONG');
+      if (!isControlHandle(action.target)) return fail('POLICY_CONTROL_INVALID');
+      if (action.target.length > MAX_CONTROL_HANDLE_LENGTH) return fail('POLICY_TARGET_TOO_LONG');
       return pass();
 
     case 'TYPE':
     case 'SELECT': {
-      if (action.target.length > MAX_SELECTOR_LENGTH) return fail('POLICY_TARGET_TOO_LONG');
+      if (!isControlHandle(action.target)) return fail('POLICY_CONTROL_INVALID');
+      if (action.target.length > MAX_CONTROL_HANDLE_LENGTH) return fail('POLICY_TARGET_TOO_LONG');
       if (action.value.length > MAX_TYPED_VALUE_LENGTH) return fail('POLICY_VALUE_TOO_LONG');
       // A local alias is always acceptable — it resolves to the real value only at
       // execution time, on-device. Anything else must scan clean.

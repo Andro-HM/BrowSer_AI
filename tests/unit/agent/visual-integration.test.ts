@@ -58,7 +58,7 @@ function domInsufficientSnapshot(): DomVisualSnapshot {
 }
 
 const STRUCTURE: FieldStructure[] = [
-  { tag: 'button', selector: '#continue', label: 'Continue', disabled: false },
+  { tag: 'button', control: 'CONTROL_1', label: 'Continue', disabled: false },
 ];
 
 function scanReturning(snapshot: DomVisualSnapshot | null) {

@@ -3,7 +3,7 @@ import { classifyPage } from '../../../../extension/src/perception/visual/pageCl
 import type { FieldStructure } from '../../../../extension/src/types/messages';
 
 function field(partial: Partial<FieldStructure> & { tag: FieldStructure['tag'] }): FieldStructure {
-  return { selector: `#${partial.inputType ?? partial.tag}`, disabled: false, ...partial };
+  return { control: 'CONTROL_1', disabled: false, ...partial };
 }
 
 describe('rule-based page classifier', () => {

@@ -37,10 +37,9 @@ def _request(**overrides) -> dict:
         "sanitizedPageStructure": [
             {
                 "tag": "input",
-                "selector": "#email",
+                "control": "CONTROL_1",
                 "inputType": "email",
                 "label": "Email",
-                "name": "email",
                 "filled": False,
                 "disabled": False,
             },
@@ -64,7 +63,7 @@ def test_sanitized_request_is_accepted_positive_control():
     response = client.post("/v1/plan", json=_request())
     assert response.status_code == 200
     assert response.json()["actions"] == [
-        {"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}
+        {"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}
     ]
 
 
@@ -83,7 +82,7 @@ def test_prescan_refuses_raw_pii_in_top_level_text(field, value):
     assert "Raw PII detected" in response.json()["detail"]
 
 
-@pytest.mark.parametrize("node_field", ["label", "name"])
+@pytest.mark.parametrize("node_field", ["label"])
 def test_prescan_refuses_raw_pii_smuggled_into_a_node(node_field):
     """The per-node strings are exactly what the provider serializes into its prompt."""
     response = client.post("/v1/plan", json=_with_node(**{node_field: CANARY_EMAIL}))

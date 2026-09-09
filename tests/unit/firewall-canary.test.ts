@@ -27,8 +27,8 @@ function sanitizedRequest(): RemoteAgentRequest {
     taskObjective: 'fill the checkout form and continue',
     pageOrigin: 'https://shop.example.test',
     sanitizedPageStructure: [
-      { tag: 'input', selector: '#email', inputType: 'email', label: 'Email', filled: false, disabled: false },
-      { tag: 'button', selector: '#pay', label: 'Pay now', filled: false, disabled: false },
+      { tag: 'input', control: 'CONTROL_1', inputType: 'email', label: 'Email', filled: false, disabled: false },
+      { tag: 'button', control: 'CONTROL_2', label: 'Pay now', filled: false, disabled: false },
     ],
     sanitizedVisibleText: 'Checkout. Email: USER_EMAIL_1. Card: USER_PAYMENT_1. Total 42.00',
     aliases: [

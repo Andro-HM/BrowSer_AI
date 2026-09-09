@@ -400,7 +400,11 @@ export interface AliasRecord {
   // actualValue MUST remain local (stored in the vault, never serialized remotely).
 }
 
+/** Opaque local handle grammar; its Element mapping is never serializable. */
+export type ControlHandle = `CONTROL_${number}`;
+
 export type AgentAction =
+  /** `target` is an opaque CONTROL_n handle, never a CSS selector. */
   | { action: 'CLICK'; target: string }
   | { action: 'TYPE'; target: string; value: string }
   | { action: 'SELECT'; target: string; value: string }
@@ -471,23 +475,21 @@ export interface RemoteAgentRequest {
 // M6 — Agent, structured actions, and the sanitized page snapshot.
 //
 // The agent loop observes the page ONLY through sanitized structures: a
-// `SanitizedNode` carries field semantics (tag/type/label/name) and whether a
-// field is filled — never a raw value. Labels/names are included only when the
-// local PII detector finds nothing in them (fail closed); the privacy firewall
+// `SanitizedNode` carries field semantics (tag/type/label) and whether a field is
+// filled — never a raw value or page-derived targeting metadata. Labels are included
+// only when the local PII detector finds nothing in them (fail closed); the firewall
 // re-scans the whole serialized request before any transmission.
 // ---------------------------------------------------------------------------
 
 /** One form/control on the page, as seen by the REMOTE planner. Never a raw value. */
 export interface SanitizedNode {
   tag: 'input' | 'textarea' | 'select' | 'button';
-  /** Deterministic CSS selector computed by the content script; the ONLY way to target it. */
-  selector: string;
+  /** Opaque CONTROL_n handle; mapping to the actual Element stays in the content script. */
+  control: string;
   /** For inputs/selects: the declared type (`text`, `email`, `password`, …). */
   inputType?: string;
   /** Accessible label text; present ONLY when detection found nothing sensitive in it. */
   label?: string;
-  /** Field name attribute; gated exactly like `label`. */
-  name?: string;
   /** True when the field currently holds a value (the value itself never crosses). */
   filled: boolean;
   disabled: boolean;

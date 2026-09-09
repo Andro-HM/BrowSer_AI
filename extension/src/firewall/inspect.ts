@@ -32,6 +32,7 @@ import type { RemoteAgentRequest } from '../types/contracts';
 import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
 import { isPrivacyMode } from '../policy/modes';
 import { detectPII } from '../perception/pii';
+import { isControlHandle } from '../content/controls';
 
 export interface FirewallVerdict {
   allowed: boolean;
@@ -71,15 +72,15 @@ function isValidNode(node: unknown): boolean {
   if (typeof node !== 'object' || node === null) return false;
   const n = node as Record<string, unknown>;
   if (!['input', 'textarea', 'select', 'button'].includes(n['tag'] as string)) return false;
-  if (typeof n['selector'] !== 'string' || n['selector'].length === 0) return false;
+  if (!isControlHandle(n['control'])) return false;
   if (typeof n['filled'] !== 'boolean' || typeof n['disabled'] !== 'boolean') return false;
-  for (const optional of ['inputType', 'label', 'name']) {
+  for (const optional of ['inputType', 'label']) {
     const value = n[optional];
     if (value !== undefined && typeof value !== 'string') return false;
   }
   if (n['belowFold'] !== undefined && typeof n['belowFold'] !== 'boolean') return false;
   for (const key of Object.keys(n)) {
-    if (!['tag', 'selector', 'inputType', 'label', 'name', 'filled', 'disabled', 'belowFold'].includes(key)) {
+    if (!['tag', 'control', 'inputType', 'label', 'filled', 'disabled', 'belowFold'].includes(key)) {
       return false;
     }
   }
@@ -118,7 +119,6 @@ function textBearingStrings(request: RemoteAgentRequest): string[] {
   const texts: string[] = [request.sanitizedVisibleText, request.taskObjective];
   for (const node of request.sanitizedPageStructure) {
     if (node.label !== undefined) texts.push(node.label);
-    if (node.name !== undefined) texts.push(node.name);
   }
   return texts;
 }

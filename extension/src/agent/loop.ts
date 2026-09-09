@@ -131,16 +131,16 @@ export interface AgentLoopOptions {
 const DEFAULT_MAX_STEPS = 8;
 
 /**
- * Build the remote-safe `SanitizedNode` list from the raw internal structure. A label or
- * name crosses ONLY when the M2 detector finds nothing in it (fail closed); values never
- * cross at all — a field is just `filled` or not.
+ * Build the remote-safe `SanitizedNode` list from the raw internal structure. The
+ * control is opaque; ids, names, selectors, and values never cross. Labels cross only
+ * when the M2 detector finds nothing in them (fail closed).
  */
 export function toSanitizedNodes(structure: ScanPageResponse['structure']): SanitizedNode[] {
   const out: SanitizedNode[] = [];
   for (const field of structure ?? []) {
     const node: SanitizedNode = {
       tag: field.tag,
-      selector: field.selector,
+      control: field.control,
       filled: typeof field.value === 'string' && field.value.length > 0,
       disabled: field.disabled,
     };
@@ -152,9 +152,6 @@ export function toSanitizedNodes(structure: ScanPageResponse['structure']): Sani
     }
     if (field.belowFold === true) {
       node.belowFold = true;
-    }
-    if (field.name !== undefined && detectPII(field.name).length === 0) {
-      node.name = field.name;
     }
     out.push(node);
   }
