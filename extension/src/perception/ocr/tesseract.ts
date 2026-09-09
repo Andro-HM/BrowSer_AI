@@ -71,18 +71,35 @@ function taggedError(message: string): Error {
 
 /** Render raw RGBA pixels to a Blob the Tesseract worker can decode. */
 async function imageToBlob(image: OcrImage): Promise<Blob> {
-  if (typeof OffscreenCanvas === 'undefined') {
-    throw taggedError('OffscreenCanvas unavailable — cannot prepare pixels for OCR');
+  let blob: Blob | null = null;
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(image.width, image.height);
+    const ctx = canvas.getContext('2d');
+    if (ctx !== null) {
+      const imageData = ctx.createImageData(image.width, image.height);
+      imageData.data.set(image.data);
+      ctx.putImageData(imageData, 0, 0);
+      blob = await canvas.convertToBlob({ type: 'image/png' });
+      if (blob) return blob;
+    }
   }
-  const canvas = new OffscreenCanvas(image.width, image.height);
-  const ctx = canvas.getContext('2d');
-  if (ctx === null) throw taggedError('2D context unavailable — cannot prepare pixels for OCR');
-  // Build the ImageData via the context so the backing buffer type matches lib.dom
-  // (a raw Uint8ClampedArray may be ArrayBufferLike, which the ImageData ctor rejects).
-  const imageData = ctx.createImageData(image.width, image.height);
-  imageData.data.set(image.data);
-  ctx.putImageData(imageData, 0, 0);
-  return canvas.convertToBlob({ type: 'image/png' });
+  // Fallback for contexts where OffscreenCanvas is absent (panel document always has
+  // a DOM canvas; tests run in Node without either and will error below).
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    if (ctx !== null) {
+      const imageData = ctx.createImageData(image.width, image.height);
+      imageData.data.set(image.data);
+      ctx.putImageData(imageData, 0, 0);
+      return await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(taggedError('canvas.toBlob failed'))), 'image/png');
+      });
+    }
+  }
+  throw taggedError('OffscreenCanvas unavailable — cannot prepare pixels for OCR');
 }
 
 /** Flatten the block tree to word-level OCR results in raster-pixel coordinates. */

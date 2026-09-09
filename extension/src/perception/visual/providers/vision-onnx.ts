@@ -35,7 +35,7 @@ import {
 /** Bundled model asset, relative to the extension root. */
 export const VISION_MODEL_ASSET = 'models/icon-detect-640.onnx';
 /** Directory holding the ONNX Runtime wasm binaries, relative to the extension root. */
-export const VISION_WASM_DIR = 'models/';
+export const VISION_WASM_DIR = 'ort/';
 /** Name reported in observations and diagnostics. */
 export const VISION_MODEL_NAME = 'omniparser-icon-detect-640';
 
