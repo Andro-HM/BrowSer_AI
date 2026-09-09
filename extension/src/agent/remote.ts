@@ -35,7 +35,9 @@ export interface RemoteHttpAgentGatewayOptions {
 
 export function createRemoteHttpAgentGateway(options: RemoteHttpAgentGatewayOptions): AgentGateway {
   const fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
-  const timeoutMs = options.timeoutMs ?? 15_000;
+  // Gemini backend waits 30s; Ollama waits 90s. The extension must not abort first.
+  // Default covers Gemini (+5s margin); AgentTask overrides per provider.
+  const timeoutMs = options.timeoutMs ?? 35_000;
 
   return {
     async plan(request: RemoteAgentRequest): Promise<AgentAction[]> {

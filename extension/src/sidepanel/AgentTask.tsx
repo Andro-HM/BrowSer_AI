@@ -66,12 +66,15 @@ export function AgentTask() {
       // Optional backend bearer token (build-time `VITE_PRIVAGENT_API_KEY`).
       // Absent = dev mode: requests go without an Authorization header.
       const apiKey = import.meta.env.VITE_PRIVAGENT_API_KEY as string | undefined;
+      // Timeouts must cover the backend wait: Gemini 30s, Ollama 90s.
+      const timeoutMs = plannerMode === 'local' ? 95_000 : 35_000;
       const gateway =
         plannerMode === 'offline'
           ? createDeterministicPlanner()
           : createRemoteHttpAgentGateway({
               endpoint: REMOTE_PLAN_ENDPOINT,
               firewall,
+              timeoutMs,
               ...(apiKey !== undefined && apiKey.length > 0 ? { apiKey } : {}),
             });
       const provider = plannerMode === 'offline' ? undefined : (plannerMode === 'local' ? 'ollama' : 'gemini');
