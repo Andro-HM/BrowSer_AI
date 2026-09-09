@@ -214,10 +214,14 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
 
     // Navigation allowlist: explicit option wins; otherwise the scanned page's own
     // origin (same-site navigation only). Shared with the bridge's policy provider.
+    // Fail closed when the page is http (firewall + backend require https origins):
+    // an http origin would make every request fail the firewall, so leave the
+    // allowlist empty (no navigation) rather than block the whole agent.
     let allowlist = options.navigationAllowlist ?? [];
     if (options.navigationAllowlist === undefined && observed.snapshot?.url) {
       try {
-        allowlist = [new URL(observed.snapshot.url).origin];
+        const origin = new URL(observed.snapshot.url).origin;
+        allowlist = origin.startsWith('https://') ? [origin] : [];
       } catch {
         allowlist = [];
       }
