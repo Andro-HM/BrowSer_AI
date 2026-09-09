@@ -13,6 +13,7 @@ import sys
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from slowapi import Limiter
@@ -62,6 +63,17 @@ if (
 
 app = FastAPI(title="PrivAgent Backend", version="0.0.0")
 app.state.limiter = limiter
+# Chrome extension origin is `chrome-extension://<id>` (unpredictable) and the panel
+# fetches `http://localhost:8000/v1/plan` directly. Without CORS the browser blocks
+# the response even on 200. Allow extension + localhost origins for the real runtime
+# path; the privacy boundary is the firewall/bearer token, not the origin header.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(RequestValidationError)
