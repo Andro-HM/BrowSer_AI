@@ -23,7 +23,8 @@ export default defineManifest({
   // (worker, wasm core, language data) are packaged and loaded from the extension
   // origin ('self') — never from a network origin (CONTRIBUTING.md §5, §9).
   content_security_policy: {
-    extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+    extension_pages:
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https://generativelanguage.googleapis.com",
   },
   background: {
     service_worker: 'extension/src/background/index.ts',
