@@ -42,7 +42,7 @@ def _request(**overrides) -> dict:
 def gemini_env(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 
 def _mock_gemini(parsed: PlanResult | None = None, *, side_effect: BaseException | None = None) -> Mock:
