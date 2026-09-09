@@ -28,7 +28,8 @@ from .llm_common import (
     to_plan_response,
 )
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+# Gemini 2.0 Flash was shut down; retain GEMINI_MODEL as an explicit deployment override.
+DEFAULT_MODEL = "gemini-2.5-flash"
 # Request timeout: milliseconds for the SDK `HttpOptions`, seconds for us.
 # Gemini answers faster than a local model (Ollama allows 90s); a hung call
 # must fail closed quickly so it can never block a demo or a worker.

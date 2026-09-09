@@ -4,7 +4,11 @@ import { createDeterministicPlanner } from '../../extension/src/agent/planner';
 import { createActionBridge } from '../../extension/src/actions';
 import { createPrivacyFirewall } from '../../extension/src/firewall';
 import { createLocalVault } from '../../extension/src/vault';
-import type { AgentAction, RemoteAgentRequest } from '../../extension/src/types/contracts';
+import type {
+  AgentAction,
+  RemoteAgentRequest,
+  VisualPerceptionResult,
+} from '../../extension/src/types/contracts';
 import type { FieldStructure, ScanPageResponse } from '../../extension/src/types/messages';
 
 const CANARY_EMAIL = 'CANARY_EMAIL_001@example.test';
@@ -353,6 +357,68 @@ describe('agent loop (deterministic, in-extension)', () => {
     });
     expect(result.status).toBe('completed');
     expect(seenRequests[0]?.provider).toBe('ollama');
+  });
+
+  it('blocks egress when local visual OCR confirms a credential', async () => {
+    const page = fakePage();
+    page.scan = async () => ({
+      pageText: 'Canvas account screen',
+      snapshot: {
+        url: 'https://canvas.test/account',
+        viewport: { width: 1280, height: 800 },
+        domTextLength: 21,
+        candidates: [],
+      },
+      structure: [],
+    });
+    const visual: VisualPerceptionResult = {
+      status: 'completed',
+      supported: true,
+      observations: [],
+      contentStatus: 'ok',
+      contentFindings: [
+        {
+          regionId: 'canvas-account',
+          category: 'PASSWORD',
+          confidence: 0.99,
+          bbox: [20, 30, 180, 24],
+          text: 'CANARY_VISUAL_PASSWORD_001',
+          provider: 'test-ocr',
+          source: 'OCR',
+        },
+      ],
+      metrics: {
+        candidatesConsidered: 1,
+        regionsSelected: 1,
+        regionsProcessed: 1,
+        regionsFromCache: 0,
+        durationMs: 1,
+      },
+    };
+    const observeVisual = vi.fn(async () => visual);
+    const plan = vi.fn(async () => []);
+    const events: string[] = [];
+    const vault = createLocalVault();
+
+    const result = await runAgentLoop({
+      task: 'inspect the account screen',
+      sessionId: 'visual-credential-session',
+      vault,
+      gateway: { plan },
+      bridge: createActionBridge({ vault, sendToPage: page.executor }),
+      firewall: createPrivacyFirewall(),
+      scan: page.scan,
+      observeVisual,
+      onEvent: (event) => events.push(`${event.type}:${event.code}`),
+    });
+
+    expect(observeVisual).toHaveBeenCalledOnce();
+    expect(result.status).toBe('blocked');
+    expect(result.reason).toBe('PAGE_BLOCKED');
+    expect(result.stageMs.visualMs).toBeGreaterThanOrEqual(0);
+    expect(events).toContain('VISUAL:completed');
+    // The OCR canary remains local: policy blocks before a planner request exists.
+    expect(plan).not.toHaveBeenCalled();
   });
 
   it('rejects an empty task', async () => {

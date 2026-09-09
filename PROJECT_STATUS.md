@@ -28,7 +28,16 @@ this host has no `python` executable.**
 - Navigation allowlists are per-run handles, not mutable module-global state.
 - Extension and backend reject encoded image/video/audio/base64 payloads.
 - Backend request models forbid unknown fields and 422 validation responses omit rejected input.
-- Gates run: typecheck, 359 Vitest tests, lint, build, and isolated agent Playwright E2E — PASS.
+- Gates run: typecheck, 360 Vitest tests, lint, build, and isolated agent Playwright E2E — PASS.
+
+## M12 — Provider default validity
+
+- Gemini now defaults to `gemini-2.5-flash`; `GEMINI_MODEL` remains the deployment
+  override. No live provider call was made in this repository test environment.
+- Added an agent-loop regression proving that a confirmed local OCR credential finding
+  blocks before any planner request is made. The 24-test parallel Playwright run had one
+  browser-session closure in `agent-task`; its serial rerun passed. Backend pytest remains
+  unavailable because this host has no `python` executable.
 
 
 ---
@@ -1300,7 +1309,7 @@ _Added 2026-09-02._
 ### Scope
 
 Wired Gemini Flash into the backend `AGENT_PROVIDER` seam: `AGENT_PROVIDER=gemini`
-selects `GeminiProvider` (default model `gemini-2.0-flash`, overridable via
+selects `GeminiProvider` (default model `gemini-2.5-flash`, overridable via
 `GEMINI_MODEL`; key via `GEMINI_API_KEY`). The offline `deterministic` planner remains
 the default and requires no key — CI passes without any API credentials.
 
