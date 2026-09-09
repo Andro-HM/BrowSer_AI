@@ -71,7 +71,7 @@ export function planDeterministic(request: RemoteAgentRequest): AgentAction[] {
     );
     if (field) {
       if (field.belowFold === true) return [{ action: 'SCROLL', amount: SCROLL_STEP }];
-      return [{ action: 'TYPE', target: field.selector, value: binding.alias }];
+      return [{ action: 'TYPE', target: field.controlId, value: binding.alias }];
     }
   }
 
@@ -82,7 +82,7 @@ export function planDeterministic(request: RemoteAgentRequest): AgentAction[] {
     );
     if (submit) {
       if (submit.belowFold === true) return [{ action: 'SCROLL', amount: SCROLL_STEP }];
-      return [{ action: 'CLICK', target: submit.selector }];
+      return [{ action: 'CLICK', target: submit.controlId }];
     }
   }
 

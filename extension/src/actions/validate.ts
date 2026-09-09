@@ -5,7 +5,7 @@
 // happen later in the bridge. Webpage content is untrusted data — validation never
 // interprets page instructions, it only enforces structural constraints.
 
-import type { AgentAction, AgentActionKind } from '../types/contracts';
+import { isControlHandle, type AgentAction, type AgentActionKind } from '../types/contracts';
 import { ALLOWED_ACTION_KINDS } from './kinds';
 import { detectPII } from '../perception/pii';
 
@@ -114,11 +114,13 @@ export function validateActionPolicy(
   switch (action.action) {
     case 'CLICK':
       if (action.target.length > MAX_SELECTOR_LENGTH) return fail('POLICY_TARGET_TOO_LONG');
+      if (!isControlHandle(action.target)) return fail('POLICY_TARGET_NOT_CONTROL');
       return pass();
 
     case 'TYPE':
     case 'SELECT': {
       if (action.target.length > MAX_SELECTOR_LENGTH) return fail('POLICY_TARGET_TOO_LONG');
+      if (!isControlHandle(action.target)) return fail('POLICY_TARGET_NOT_CONTROL');
       if (action.value.length > MAX_TYPED_VALUE_LENGTH) return fail('POLICY_VALUE_TOO_LONG');
       // A local alias is always acceptable — it resolves to the real value only at
       // execution time, on-device. Anything else must scan clean.

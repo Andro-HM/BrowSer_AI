@@ -104,7 +104,7 @@ export function toSanitizedNodes(structure: ScanPageResponse['structure']): Sani
   for (const field of structure ?? []) {
     const node: SanitizedNode = {
       tag: field.tag,
-      selector: field.selector,
+      controlId: field.controlId,
       filled: typeof field.value === 'string' && field.value.length > 0,
       disabled: field.disabled,
     };

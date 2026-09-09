@@ -13,9 +13,9 @@ def make_request(**overrides) -> PlanRequest:
     base = dict(
         taskObjective="fill the form with my details and submit",
         sanitizedPageStructure=[
-            SanitizedNode(tag="input", selector="#email", inputType="email", label="Email", filled=False, disabled=False),
-            SanitizedNode(tag="input", selector="#phone", inputType="tel", name="phone", label="Phone", filled=False, disabled=False),
-            SanitizedNode(tag="button", selector="#submit", label="Submit", filled=False, disabled=False),
+            SanitizedNode(tag="input", controlId="CONTROL_1", inputType="email", label="Email", filled=False, disabled=False),
+            SanitizedNode(tag="input", controlId="CONTROL_2", inputType="tel", name="phone", label="Phone", filled=False, disabled=False),
+            SanitizedNode(tag="button", controlId="CONTROL_3", label="Submit", filled=False, disabled=False),
         ],
         sanitizedVisibleText="Email USER_EMAIL_1 · Phone USER_PHONE_1",
         aliases=[
@@ -39,7 +39,7 @@ def test_plan_types_email_alias_into_empty_field():
     response = client.post("/v1/plan", json=make_request().model_dump())
     assert response.status_code == 200
     actions = response.json()["actions"]
-    assert actions == [{"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}]
+    assert actions == [{"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}]
 
 
 def test_act_alias_route_matches_plan_contract():
@@ -50,30 +50,30 @@ def test_act_alias_route_matches_plan_contract():
 def test_plan_advances_to_phone_then_submit():
     filled_email = make_request(
         sanitizedPageStructure=[
-            SanitizedNode(tag="input", selector="#email", inputType="email", label="Email", filled=True, disabled=False),
-            SanitizedNode(tag="input", selector="#phone", inputType="tel", name="phone", label="Phone", filled=False, disabled=False),
-            SanitizedNode(tag="button", selector="#submit", label="Submit", filled=False, disabled=False),
+            SanitizedNode(tag="input", controlId="CONTROL_1", inputType="email", label="Email", filled=True, disabled=False),
+            SanitizedNode(tag="input", controlId="CONTROL_2", inputType="tel", name="phone", label="Phone", filled=False, disabled=False),
+            SanitizedNode(tag="button", controlId="CONTROL_3", label="Submit", filled=False, disabled=False),
         ]
     )
     second = client.post("/v1/plan", json=filled_email.model_dump()).json()["actions"]
-    assert second == [{"action": "TYPE", "target": "#phone", "value": "USER_PHONE_1"}]
+    assert second == [{"action": "TYPE", "target": "CONTROL_2", "value": "USER_PHONE_1"}]
 
     filled_both = make_request(
         sanitizedPageStructure=[
-            SanitizedNode(tag="input", selector="#email", inputType="email", label="Email", filled=True, disabled=False),
-            SanitizedNode(tag="input", selector="#phone", inputType="tel", name="phone", label="Phone", filled=True, disabled=False),
-            SanitizedNode(tag="button", selector="#submit", label="Submit", filled=False, disabled=False),
+            SanitizedNode(tag="input", controlId="CONTROL_1", inputType="email", label="Email", filled=True, disabled=False),
+            SanitizedNode(tag="input", controlId="CONTROL_2", inputType="tel", name="phone", label="Phone", filled=True, disabled=False),
+            SanitizedNode(tag="button", controlId="CONTROL_3", label="Submit", filled=False, disabled=False),
         ]
     )
     third = client.post("/v1/plan", json=filled_both.model_dump()).json()["actions"]
-    assert third == [{"action": "CLICK", "target": "#submit"}]
+    assert third == [{"action": "CLICK", "target": "CONTROL_3"}]
 
 
 def test_plan_returns_empty_when_nothing_to_do():
     done = make_request(
         taskObjective="fill the form",
         sanitizedPageStructure=[
-            SanitizedNode(tag="input", selector="#email", inputType="email", label="Email", filled=True, disabled=False)
+            SanitizedNode(tag="input", controlId="CONTROL_1", inputType="email", label="Email", filled=True, disabled=False)
         ],
     )
     assert client.post("/v1/plan", json=done.model_dump()).json()["actions"] == []

@@ -8,6 +8,7 @@
 // Capture and analysis themselves run in the side panel document, not here.
 
 import { collectVisualCandidatesInPage } from '../perception/visual/collect-candidates';
+import { createLocalControlRegistry, executeControlAction } from './controls';
 import {
   EXECUTE_ACTION,
   SCAN_PAGE,
@@ -18,6 +19,8 @@ import {
   type ScrollViewportResponse,
 } from '../types/messages';
 import type { AgentAction } from '../types/contracts';
+
+const controls = createLocalControlRegistry();
 
 /**
  * Gather the user-visible text surface M2 runs over: the whole page's rendered text
@@ -42,21 +45,6 @@ function collectPageText(): string {
 /** Escape a value for use inside a CSS attribute selector (`[name="…"]`). */
 function escapeAttr(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-/**
- * Build a deterministic CSS selector for an element: `#id` when it has an id,
- * `[name="…"]` when it has a name, otherwise inject a `data-priv-idx` attribute so the
- * selector survives until execution. The selector is the ONLY targeting mechanism —
- * the agent never receives element handles or markup.
- */
-function selectorFor(el: Element, fallbackIndex: number): string {
-  const id = el.id;
-  if (id) return `#${CSS.escape(id)}`;
-  const name = el.getAttribute('name');
-  if (name) return `[name="${escapeAttr(name)}"]`;
-  el.setAttribute('data-priv-idx', String(fallbackIndex));
-  return `[data-priv-idx="${fallbackIndex}"]`;
 }
 
 /** Associated label / aria-label / placeholder / field name — the best text hint available. */
@@ -84,7 +72,7 @@ function labelFor(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
 function collectFieldStructure(): FieldStructure[] {
   const out: FieldStructure[] = [];
   const nodes = document.querySelectorAll('input, textarea, select, button');
-  let fallback = 0;
+  controls.beginObservation();
 
   for (const el of Array.from(nodes)) {
     const tag = el.tagName.toLowerCase();
@@ -101,8 +89,11 @@ function collectFieldStructure(): FieldStructure[] {
       continue;
     }
 
-    const selector = selectorFor(el, fallback++);
-    const structure: FieldStructure = { tag: tag as FieldStructure['tag'], selector, disabled: (el as HTMLButtonElement).disabled };
+    const structure: FieldStructure = {
+      tag: tag as FieldStructure['tag'],
+      controlId: controls.register(el),
+      disabled: (el as HTMLButtonElement).disabled,
+    };
     if (el.getBoundingClientRect().top >= window.innerHeight) structure.belowFold = true;
 
     if (el.id) structure.id = el.id;
@@ -127,15 +118,6 @@ function collectFieldStructure(): FieldStructure[] {
   return out;
 }
 
-/** True when the element is attached, rendered, and interactable. */
-function isInteractable(el: Element): boolean {
-  if (!el.isConnected) return false;
-  const style = window.getComputedStyle(el);
-  if (style.display === 'none' || style.visibility === 'hidden') return false;
-  const rect = el.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0;
-}
-
 /**
  * Execute one structured agent action. The action was validated and its `TYPE` value
  * resolved (alias → real value) BEFORE reaching this script; the resolved value transits
@@ -155,44 +137,7 @@ function executeActionInPage(action: AgentAction): ExecuteActionResponse {
     return { ok: true, code: 'OK' };
   }
 
-  const el = document.querySelector(action.target);
-  if (!el) return { ok: false, code: 'NOT_FOUND' };
-  if (!isInteractable(el)) return { ok: false, code: 'NOT_VISIBLE' };
-
-  if (action.action === 'CLICK') {
-    if ((el as HTMLButtonElement).disabled) return { ok: false, code: 'DISABLED' };
-    el.scrollIntoView({ block: 'center', behavior: 'auto' });
-    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    return { ok: true, code: 'OK' };
-  }
-
-  if (action.action === 'TYPE') {
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-      if (el.disabled || el.readOnly) return { ok: false, code: 'DISABLED' };
-      el.scrollIntoView({ block: 'center', behavior: 'auto' });
-      el.value = action.value;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true, code: 'OK' };
-    }
-    return { ok: false, code: 'UNSUPPORTED' };
-  }
-
-  if (action.action === 'SELECT') {
-    if (el instanceof HTMLSelectElement) {
-      if (el.disabled) return { ok: false, code: 'DISABLED' };
-      el.scrollIntoView({ block: 'center', behavior: 'auto' });
-      const option = Array.from(el.options).find((o) => o.value === action.value);
-      if (!option) return { ok: false, code: 'NO_SUCH_OPTION' };
-      el.value = action.value;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true, code: 'OK' };
-    }
-    return { ok: false, code: 'UNSUPPORTED' };
-  }
-
-  return { ok: false, code: 'UNSUPPORTED' };
+  return executeControlAction(action, controls);
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

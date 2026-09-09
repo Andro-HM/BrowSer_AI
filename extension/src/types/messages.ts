@@ -52,8 +52,8 @@ export interface ScanPageResponse {
  */
 export interface FieldStructure {
   tag: 'input' | 'textarea' | 'select' | 'button';
-  /** Deterministic CSS selector (id → name → injected `data-priv-idx` attribute). */
-  selector: string;
+  /** Opaque local handle, never derived from page IDs/names/selectors. */
+  controlId: string;
   id?: string;
   name?: string;
   inputType?: string;

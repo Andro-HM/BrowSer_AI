@@ -113,16 +113,16 @@ describe('agent loop network isolation', () => {
           .join('\n'),
         snapshot: null,
         structure: [
-          { tag: 'input', selector: '#email', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
-          { tag: 'input', selector: '#phone', inputType: 'tel', label: 'Phone', value: state.phone || undefined, disabled: false },
-          { tag: 'button', selector: '#submit', label: 'Submit', disabled: state.submitted },
+          { tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
+          { tag: 'input', controlId: 'CONTROL_2', inputType: 'tel', label: 'Phone', value: state.phone || undefined, disabled: false },
+          { tag: 'button', controlId: 'CONTROL_3', label: 'Submit', disabled: state.submitted },
         ],
       };
     };
     const executor = async (action: import('../../extension/src/types/contracts').AgentAction) => {
-      if (action.action === 'TYPE' && action.target === '#email') state.email = action.value;
-      else if (action.action === 'TYPE' && action.target === '#phone') state.phone = action.value;
-      else if (action.action === 'CLICK' && action.target === '#submit') state.submitted = true;
+      if (action.action === 'TYPE' && action.target === 'CONTROL_1') state.email = action.value;
+      else if (action.action === 'TYPE' && action.target === 'CONTROL_2') state.phone = action.value;
+      else if (action.action === 'CLICK' && action.target === 'CONTROL_3') state.submitted = true;
       else return { ok: false, code: 'NOT_FOUND' };
       return { ok: true, code: 'OK' };
     };
@@ -172,7 +172,7 @@ describe('remote gateway firewall gate', () => {
     const clean: RemoteAgentRequest = {
       taskObjective: 'fill the form',
       sanitizedPageStructure: [
-        { tag: 'input', selector: '#email', inputType: 'email', label: 'Email', filled: false, disabled: false },
+        { tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', filled: false, disabled: false },
       ],
       sanitizedVisibleText: 'Email field',
       aliases: [{ alias: 'USER_EMAIL_1', category: 'EMAIL' }],

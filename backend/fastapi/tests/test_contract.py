@@ -17,7 +17,7 @@ EXAMPLE_REQUEST = {
     "sanitizedPageStructure": [
         {
             "tag": "input",
-            "selector": "#email",
+            "controlId": "CONTROL_1",
             "inputType": "email",
             "label": "Email",
             "filled": False,
@@ -38,7 +38,7 @@ def test_docs_example_returns_valid_action_plan():
     body = response.json()
     assert set(body.keys()) == {"actions"}
     assert body["actions"] == [
-        {"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}
+        {"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}
     ]
 
 

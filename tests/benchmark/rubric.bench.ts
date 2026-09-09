@@ -269,7 +269,12 @@ describe('bench request-side gate', () => {
   it('never places raw values into SanitizedNodes for bench fixtures', () => {
     for (const page of bench.pages) {
       const nodes = toSanitizedNodes(
-        page.structure.map((field) => ({ ...field, disabled: false, value: undefined })),
+        page.structure.map((field, index) => ({
+          ...field,
+          controlId: `CONTROL_${index + 1}`,
+          disabled: false,
+          value: undefined,
+        })),
       );
       for (const node of nodes) {
         expect(JSON.stringify(node)).not.toMatch(/BENCH_/);

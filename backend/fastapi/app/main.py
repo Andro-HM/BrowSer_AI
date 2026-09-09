@@ -90,7 +90,7 @@ def _plan_impl(payload: PlanRequest) -> dict:
         struct_texts.append(binding.alias)
         struct_texts.append(binding.category)
     for node in payload.sanitizedPageStructure:
-        struct_texts.append(node.selector)
+        struct_texts.append(node.controlId)
         if node.label is not None:
             struct_texts.append(node.label)
         if node.name is not None:

@@ -24,7 +24,7 @@ def _clean_request(**overrides) -> dict:
         "sanitizedPageStructure": [
             {
                 "tag": "input",
-                "selector": "#email",
+                "controlId": "CONTROL_1",
                 "inputType": "email",
                 "label": "Email",
                 "filled": False,
@@ -49,12 +49,12 @@ def _mock_gemini(parsed: PlanResult) -> Mock:
     return client_mock
 
 
-def test_pii_in_action_selector_gives_502(monkeypatch):
+def test_pii_in_action_control_id_gives_502(monkeypatch):
     monkeypatch.setenv("AGENT_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     mock = _mock_gemini(
         PlanResult(
-            action=PlannedAction(type="CLICK", selector="#user@test.com"),
+            action=PlannedAction(type="CLICK", controlId="CONTROL_user@test.com"),
             done=False,
             reason="clicking the field",
         )
@@ -95,7 +95,7 @@ def test_clean_request_and_response_gives_200(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     mock = _mock_gemini(
         PlanResult(
-            action=PlannedAction(type="TYPE", selector="#email", value="USER_EMAIL_1"),
+            action=PlannedAction(type="TYPE", controlId="CONTROL_1", value="USER_EMAIL_1"),
             done=False,
             reason="email field is empty",
         )
@@ -104,5 +104,5 @@ def test_clean_request_and_response_gives_200(monkeypatch):
         response = client.post("/v1/plan", json=_clean_request(provider="gemini"))
     assert response.status_code == 200
     assert response.json() == {
-        "actions": [{"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}]
+        "actions": [{"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}]
     }

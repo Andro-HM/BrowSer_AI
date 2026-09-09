@@ -22,7 +22,7 @@ def _request(**overrides) -> dict:
         "sanitizedPageStructure": [
             {
                 "tag": "input",
-                "selector": "#email",
+                "controlId": "CONTROL_1",
                 "inputType": "email",
                 "label": "Email",
                 "filled": False,
@@ -59,7 +59,7 @@ def _mock_gemini(parsed: PlanResult | None = None, *, side_effect: BaseException
 def test_valid_planning_response_returns_contract_actions(gemini_env):
     mock = _mock_gemini(
         PlanResult(
-            action=PlannedAction(type="TYPE", selector="#email", value="USER_EMAIL_1"),
+            action=PlannedAction(type="TYPE", controlId="CONTROL_1", value="USER_EMAIL_1"),
             done=False,
             reason="email field is empty",
         )
@@ -68,7 +68,7 @@ def test_valid_planning_response_returns_contract_actions(gemini_env):
         response = client.post("/v1/plan", json=_request())
     assert response.status_code == 200
     assert response.json() == {
-        "actions": [{"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}]
+        "actions": [{"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}]
     }
 
 
@@ -113,7 +113,7 @@ def test_prescan_blocks_raw_phone_with_422(gemini_env):
 def test_postscan_blocks_llm_pii_leak_with_502(gemini_env):
     mock = _mock_gemini(
         PlanResult(
-            action=PlannedAction(type="TYPE", selector="#email", value="user@example.test"),
+            action=PlannedAction(type="TYPE", controlId="CONTROL_1", value="user@example.test"),
             done=False,
             reason="filling with the user's email",
         )
@@ -147,5 +147,5 @@ def test_deterministic_default_ignores_missing_key():
     response = client.post("/v1/plan", json=_request())
     assert response.status_code == 200
     assert response.json()["actions"] == [
-        {"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}
+        {"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}
     ]

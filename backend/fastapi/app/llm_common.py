@@ -32,7 +32,7 @@ ALL_ACTION_TYPES = ("CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE")
 
 class PlannedAction(BaseModel):
     type: Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
-    selector: str | None = None  # required for CLICK, TYPE, SELECT
+    controlId: str | None = None  # required for CLICK, TYPE, SELECT
     value: str | None = None  # required for TYPE, SELECT (alias or benign text only)
     direction: Literal["up", "down"] | None = None  # required for SCROLL
     url: str | None = None  # required for NAVIGATE
@@ -68,11 +68,11 @@ class LLMPIILeakError(Exception):
 def to_plan_action(action: PlannedAction) -> PlanAction:
     kind = action.type
     if kind == "CLICK":
-        return ClickAction(action="CLICK", target=action.selector or "")
+        return ClickAction(action="CLICK", target=action.controlId or "")
     if kind == "TYPE":
-        return TypeAction(action="TYPE", target=action.selector or "", value=action.value or "")
+        return TypeAction(action="TYPE", target=action.controlId or "", value=action.value or "")
     if kind == "SELECT":
-        return SelectAction(action="SELECT", target=action.selector or "", value=action.value or "")
+        return SelectAction(action="SELECT", target=action.controlId or "", value=action.value or "")
     if kind == "SCROLL":
         amount = SCROLL_AMOUNT if action.direction == "down" else -SCROLL_AMOUNT
         return ScrollAction(action="SCROLL", amount=amount)
@@ -90,7 +90,7 @@ def post_scan(result: PlanResult) -> None:
     leaked = scan_pii(
         result.reason,
         action.value if action else None,
-        action.selector if action else None,
+        action.controlId if action else None,
         action.url if action else None,
     )
     if leaked:

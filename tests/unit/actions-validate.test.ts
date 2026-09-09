@@ -7,9 +7,9 @@ import {
 
 describe('action schema validation', () => {
   it('accepts each valid action shape', () => {
-    expect(validateActionSchema({ action: 'CLICK', target: '#a' }).valid).toBe(true);
-    expect(validateActionSchema({ action: 'TYPE', target: '#a', value: 'USER_EMAIL_1' }).valid).toBe(true);
-    expect(validateActionSchema({ action: 'SELECT', target: '#a', value: 'x' }).valid).toBe(true);
+    expect(validateActionSchema({ action: 'CLICK', target: 'CONTROL_1' }).valid).toBe(true);
+    expect(validateActionSchema({ action: 'TYPE', target: 'CONTROL_1', value: 'USER_EMAIL_1' }).valid).toBe(true);
+    expect(validateActionSchema({ action: 'SELECT', target: 'CONTROL_1', value: 'x' }).valid).toBe(true);
     expect(validateActionSchema({ action: 'SCROLL', amount: 300 }).valid).toBe(true);
     expect(validateActionSchema({ action: 'NAVIGATE', url: 'https://a.test/x' }).valid).toBe(true);
   });
@@ -34,7 +34,7 @@ describe('action schema validation', () => {
 describe('action policy validation', () => {
   it('always accepts alias-shaped TYPE values', () => {
     const result = validateActionPolicy(
-      { action: 'TYPE', target: '#a', value: 'USER_EMAIL_1' },
+      { action: 'TYPE', target: 'CONTROL_1', value: 'USER_EMAIL_1' },
       DEFAULT_ACTION_POLICY,
     );
     expect(result.valid).toBe(true);
@@ -42,7 +42,7 @@ describe('action policy validation', () => {
 
   it('rejects TYPE values that contain detectable PII', () => {
     const result = validateActionPolicy(
-      { action: 'TYPE', target: '#a', value: 'CANARY_EMAIL_001@example.test' },
+      { action: 'TYPE', target: 'CONTROL_1', value: 'CANARY_EMAIL_001@example.test' },
       DEFAULT_ACTION_POLICY,
     );
     expect(result.valid).toBe(false);
@@ -51,7 +51,7 @@ describe('action policy validation', () => {
 
   it('accepts clean literal values', () => {
     const result = validateActionPolicy(
-      { action: 'TYPE', target: '#a', value: 'hello world' },
+      { action: 'TYPE', target: 'CONTROL_1', value: 'hello world' },
       DEFAULT_ACTION_POLICY,
     );
     expect(result.valid).toBe(true);

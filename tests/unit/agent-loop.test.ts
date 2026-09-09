@@ -25,17 +25,17 @@ function fakePage() {
       .join('\n'),
     snapshot: null,
     structure: [
-      { tag: 'input', selector: '#email', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
-      { tag: 'input', selector: '#phone', inputType: 'tel', name: 'phone', label: 'Phone', value: state.phone || undefined, disabled: false },
-      { tag: 'button', selector: '#submit', label: 'Submit', disabled: state.submitDisabled },
+      { tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
+      { tag: 'input', controlId: 'CONTROL_2', inputType: 'tel', name: 'phone', label: 'Phone', value: state.phone || undefined, disabled: false },
+      { tag: 'button', controlId: 'CONTROL_3', label: 'Submit', disabled: state.submitDisabled },
     ] satisfies FieldStructure[],
   });
 
   /** The "page": a resolved TYPE writes the real value; CLICK disables the button. */
   const executor = async (action: AgentAction) => {
-    if (action.action === 'TYPE' && action.target === '#email') state.email = action.value;
-    else if (action.action === 'TYPE' && action.target === '#phone') state.phone = action.value;
-    else if (action.action === 'CLICK' && action.target === '#submit') state.submitDisabled = true;
+    if (action.action === 'TYPE' && action.target === 'CONTROL_1') state.email = action.value;
+    else if (action.action === 'TYPE' && action.target === 'CONTROL_2') state.phone = action.value;
+    else if (action.action === 'CLICK' && action.target === 'CONTROL_3') state.submitDisabled = true;
     else return { ok: false, code: 'NOT_FOUND' };
     return { ok: true, code: 'OK' };
   };
@@ -133,7 +133,7 @@ describe('agent loop (deterministic, in-extension)', () => {
     failing.scan = async () => ({
       pageText: `Reach me at ${CANARY_EMAIL}`,
       snapshot: null,
-      structure: [{ tag: 'input', selector: '#email', inputType: 'email', label: 'Email', disabled: false }],
+      structure: [{ tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', disabled: false }],
     });
     // Use the real loop with a gateway that throws — planner failures stop the loop.
     const vault = createLocalVault();
@@ -153,7 +153,7 @@ describe('agent loop (deterministic, in-extension)', () => {
     rejecting.scan = async () => ({
       pageText: `Reach me at ${CANARY_EMAIL}`,
       snapshot: null,
-      structure: [{ tag: 'input', selector: '#missing', inputType: 'email', label: 'Email', disabled: false }],
+      structure: [{ tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', disabled: false }],
     });
     // ONE shared vault between loop (writes aliases) and bridge (resolves them) — the
     // same constraint the panel must honor.
@@ -163,12 +163,12 @@ describe('agent loop (deterministic, in-extension)', () => {
       sessionId: 's',
       vault: sharedVault,
       gateway: createDeterministicPlanner(),
-      bridge: createActionBridge({ vault: sharedVault, sendToPage: rejecting.executor }),
+      bridge: createActionBridge({ vault: sharedVault, sendToPage: async () => ({ ok: false, code: 'CONTROL_UNKNOWN' }) }),
       firewall: createPrivacyFirewall(),
       scan: rejecting.scan,
     });
     expect(rejected.status).toBe('error');
-    expect(rejected.reason).toBe('NOT_FOUND');
+    expect(rejected.reason).toBe('CONTROL_UNKNOWN');
   });
 
   it('stops at the step budget and flags a no-progress repeat', async () => {
@@ -193,7 +193,7 @@ describe('agent loop (deterministic, in-extension)', () => {
       task: 'fill the form',
       sessionId: 's',
       vault: createLocalVault(),
-      gateway: { plan: async () => [{ action: 'TYPE', target: '#email', value: 'hello' }]},
+      gateway: { plan: async () => [{ action: 'TYPE', target: 'CONTROL_1', value: 'hello' }]},
       bridge: createActionBridge({ vault: createLocalVault(), sendToPage: async () => ({ ok: true, code: 'OK' }) }),
       firewall: createPrivacyFirewall(),
       scan: scrolling.scan,
@@ -219,7 +219,7 @@ describe('agent loop (deterministic, in-extension)', () => {
           structure: [
             {
               tag: 'input',
-              selector: '#email',
+              controlId: 'CONTROL_1',
               inputType: 'email',
               label: 'Email',
               value: state.email || undefined,
@@ -228,7 +228,7 @@ describe('agent loop (deterministic, in-extension)', () => {
             },
             {
               tag: 'button',
-              selector: '#submit',
+              controlId: 'CONTROL_2',
               label: 'Submit',
               disabled: state.submitted,
               belowFold: 1750 - page.scrollY >= 800,
@@ -241,11 +241,11 @@ describe('agent loop (deterministic, in-extension)', () => {
           page.scrollY += action.amount;
           return { ok: true, code: 'OK' };
         }
-        if (action.action === 'TYPE' && action.target === '#email') {
+        if (action.action === 'TYPE' && action.target === 'CONTROL_1') {
           state.email = action.value;
           return { ok: true, code: 'OK' };
         }
-        if (action.action === 'CLICK' && action.target === '#submit') {
+        if (action.action === 'CLICK' && action.target === 'CONTROL_2') {
           state.submitted = true;
           return { ok: true, code: 'OK' };
         }
@@ -289,7 +289,7 @@ describe('agent loop (deterministic, in-extension)', () => {
           ? [
               {
                 tag: 'input',
-                selector: '#email',
+                controlId: 'CONTROL_1',
                 inputType: 'email',
                 label: 'Email',
                 value: state.email || undefined,
@@ -314,7 +314,7 @@ describe('agent loop (deterministic, in-extension)', () => {
             url = action.url;
             return { ok: true, code: 'OK' };
           }
-          if (action.action === 'TYPE' && action.target === '#email') {
+          if (action.action === 'TYPE' && action.target === 'CONTROL_1') {
             state.email = action.value;
             return { ok: true, code: 'OK' };
           }
@@ -398,12 +398,12 @@ describe('vault wipe after every run', () => {
 describe('toSanitizedNodes', () => {
   it('gates labels/names through the PII detector and never carries values', () => {
     const nodes = toSanitizedNodes([
-      { tag: 'input', selector: '#a', label: 'Email', name: 'email', value: CANARY_EMAIL, disabled: false },
-      { tag: 'input', selector: '#b', label: `Owner ${CANARY_EMAIL}`, value: 'typed text', disabled: false },
-      { tag: 'button', selector: '#c', label: 'Submit', disabled: false },
+      { tag: 'input', controlId: 'CONTROL_1', label: 'Email', name: 'email', value: CANARY_EMAIL, disabled: false },
+      { tag: 'input', controlId: 'CONTROL_2', label: `Owner ${CANARY_EMAIL}`, value: 'typed text', disabled: false },
+      { tag: 'button', controlId: 'CONTROL_3', label: 'Submit', disabled: false },
     ]);
     const [plain, gated, button] = nodes;
-    expect(plain).toMatchObject({ selector: '#a', label: 'Email', name: 'email', filled: true });
+    expect(plain).toMatchObject({ controlId: 'CONTROL_1', label: 'Email', name: 'email', filled: true });
     expect(plain).not.toHaveProperty('value');
     expect(gated?.label).toBeUndefined();
     expect(gated?.filled).toBe(true);

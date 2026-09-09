@@ -374,6 +374,12 @@ export type AgentAction =
 
 export type AgentActionKind = AgentAction['action'];
 
+/** Opaque current-observation control identifier, never derived from page content. */
+export const CONTROL_HANDLE_PATTERN = /^CONTROL_[1-9]\d*$/;
+export function isControlHandle(value: unknown): value is string {
+  return typeof value === 'string' && CONTROL_HANDLE_PATTERN.test(value);
+}
+
 export type PrivacyEventType =
   'DETECTED' | 'SANITIZED' | 'BLOCKED' | 'ALIAS_RESOLVED' | 'TASK_RESULT';
 
@@ -419,8 +425,8 @@ export interface RemoteAgentRequest {
 /** One form/control on the page, as seen by the REMOTE planner. Never a raw value. */
 export interface SanitizedNode {
   tag: 'input' | 'textarea' | 'select' | 'button';
-  /** Deterministic CSS selector computed by the content script; the ONLY way to target it. */
-  selector: string;
+  /** Opaque local handle; the element mapping remains in the content script. */
+  controlId: string;
   /** For inputs/selects: the declared type (`text`, `email`, `password`, …). */
   inputType?: string;
   /** Accessible label text; present ONLY when detection found nothing sensitive in it. */

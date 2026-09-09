@@ -16,9 +16,16 @@ import re
 from urllib.parse import urlparse
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 ALIAS_PATTERN = re.compile(r"^USER_[A-Z]+_\d+$")
+CONTROL_ID_PATTERN = r"^CONTROL_[1-9]\d*$"
+
+
+class StrictModel(BaseModel):
+    """Fail closed on payload fields not represented by this contract."""
+
+    model_config = ConfigDict(extra="forbid")
 
 CATEGORY_FIELD_KEYWORDS: dict[str, tuple[str, ...]] = {
     "EMAIL": ("email",),
@@ -36,9 +43,9 @@ SUBMIT_LABELS = re.compile(r"^(submit|send|continue|next|sign in|log in|login|re
 SUBMIT_TASK_VERBS = re.compile(r"\b(submit|send|continue|next|sign in|log in|login|register|book|pay|complete|finish)\b", re.I)
 
 
-class SanitizedNode(BaseModel):
+class SanitizedNode(StrictModel):
     tag: Literal["input", "textarea", "select", "button"]
-    selector: str = Field(min_length=1, max_length=512)
+    controlId: str = Field(pattern=CONTROL_ID_PATTERN, max_length=64)
     inputType: str | None = None
     label: str | None = None
     name: str | None = None
@@ -47,17 +54,17 @@ class SanitizedNode(BaseModel):
     belowFold: bool | None = None
 
 
-class AliasBinding(BaseModel):
+class AliasBinding(StrictModel):
     alias: str = Field(pattern=r"^USER_[A-Z]+_\d+$")
     category: str
 
 
-class ActionPolicy(BaseModel):
+class ActionPolicy(StrictModel):
     privacyMode: str
     navigationAllowlist: list[str] = []
 
 
-class PlanRequest(BaseModel):
+class PlanRequest(StrictModel):
     """Mirrors the extension's `RemoteAgentRequest` (sanitized data only)."""
 
     taskObjective: str = Field(min_length=1, max_length=2000)
@@ -146,7 +153,7 @@ class DeterministicPlanner:
                         and _matches_category(node, keywords)
                     ):
                         return PlanResponse(
-                            actions=[TypeAction(action="TYPE", target=node.selector, value=binding.alias)]
+                            actions=[TypeAction(action="TYPE", target=node.controlId, value=binding.alias)]
                         )
 
         if SUBMIT_TASK_VERBS.search(request.taskObjective):
@@ -162,7 +169,7 @@ class DeterministicPlanner:
                             return PlanResponse(actions=[ScrollAction(action="SCROLL", amount=720)])
                         continue
                     if "CLICK" in allowed:
-                        return PlanResponse(actions=[ClickAction(action="CLICK", target=node.selector)])
+                        return PlanResponse(actions=[ClickAction(action="CLICK", target=node.controlId)])
 
         match = re.search(
             r"\b(?:open|go to|navigate to|visit)\s+([a-z0-9-]+(?:\.[a-z0-9-]+)+)",

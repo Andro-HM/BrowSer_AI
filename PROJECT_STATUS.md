@@ -5,6 +5,20 @@ _Status: M0–M9 complete — extension, perception (Tesseract OCR, BlazeFace, O
 _Engineering rules: [CONTRIBUTING.md](CONTRIBUTING.md) (formerly `CLAUDE.md`; section
 numbers unchanged)._
 
+## M10 — Friend-2 opaque control handles
+
+**Status: COMPLETE for the extension/contract migration; backend pytest pending because
+this host has no `python` executable.**
+
+- Replaced planner-visible CSS selectors with `CONTROL_n` handles.
+- The content script owns the current-observation handle → element map; targeted actions
+  have no `querySelector` fallback and unknown/stale handles return `CONTROL_UNKNOWN`.
+- Friend-2 deterministic, Gemini, and Ollama contracts now use `controlId` / opaque action
+  targets. The local firewall rejects selector-shaped control IDs.
+- Gates run: `npm run typecheck`, `npm test` (357), `npm run lint`, `npm run build` — PASS.
+- Remaining validation: backend pytest and browser E2E require a working local Python and
+  Playwright environment respectively.
+
 
 ---
 

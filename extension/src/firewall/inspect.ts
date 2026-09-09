@@ -21,7 +21,7 @@
 //
 // This module performs no logging and no network I/O.
 
-import type { RemoteAgentRequest } from '../types/contracts';
+import { isControlHandle, type RemoteAgentRequest } from '../types/contracts';
 import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
 import { detectPII } from '../perception/pii';
 
@@ -64,7 +64,7 @@ function isValidNode(node: unknown): boolean {
   if (typeof node !== 'object' || node === null) return false;
   const n = node as Record<string, unknown>;
   if (!['input', 'textarea', 'select', 'button'].includes(n['tag'] as string)) return false;
-  if (typeof n['selector'] !== 'string' || n['selector'].length === 0) return false;
+  if (!isControlHandle(n['controlId'])) return false;
   if (typeof n['filled'] !== 'boolean' || typeof n['disabled'] !== 'boolean') return false;
   for (const optional of ['inputType', 'label', 'name']) {
     const value = n[optional];
@@ -72,7 +72,7 @@ function isValidNode(node: unknown): boolean {
   }
   if (n['belowFold'] !== undefined && typeof n['belowFold'] !== 'boolean') return false;
   for (const key of Object.keys(n)) {
-    if (!['tag', 'selector', 'inputType', 'label', 'name', 'filled', 'disabled', 'belowFold'].includes(key)) {
+    if (!['tag', 'controlId', 'inputType', 'label', 'name', 'filled', 'disabled', 'belowFold'].includes(key)) {
       return false;
     }
   }

@@ -253,15 +253,16 @@ export async function runLeakageProbe(page: PageFixture): Promise<LeakageProbeRe
       page.pageText,
       ...page.structure
         .filter((field) => field.tag !== 'button')
-        .map((field) => values.get(field.selector) ?? ''),
+        .map((_field, index) => values.get(`CONTROL_${index + 1}`) ?? ''),
     ]
       .filter((part) => part.length > 0)
       .join('\n'),
     snapshot: null,
-    structure: page.structure.map((field) => ({
+    structure: page.structure.map((field, index) => ({
       ...field,
+      controlId: `CONTROL_${index + 1}`,
       disabled: field.tag === 'button' && submitted,
-      value: values.get(field.selector) || undefined,
+      value: values.get(`CONTROL_${index + 1}`) || undefined,
     })) satisfies FieldStructure[],
   });
 

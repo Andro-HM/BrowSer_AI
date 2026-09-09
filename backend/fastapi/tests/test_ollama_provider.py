@@ -22,7 +22,7 @@ def _request(**overrides) -> dict:
         "sanitizedPageStructure": [
             {
                 "tag": "input",
-                "selector": "#email",
+                "controlId": "CONTROL_1",
                 "inputType": "email",
                 "label": "Email",
                 "filled": False,
@@ -71,7 +71,7 @@ def _mock_ollama(result: PlanResult | None, *, content: str | None = None, statu
 
 def test_valid_planning_response_returns_contract_actions(ollama_env):
     result = PlanResult(
-        action=PlannedAction(type="TYPE", selector="#email", value="USER_EMAIL_1"),
+        action=PlannedAction(type="TYPE", controlId="CONTROL_1", value="USER_EMAIL_1"),
         done=False,
         reason="email field is empty",
     )
@@ -79,7 +79,7 @@ def test_valid_planning_response_returns_contract_actions(ollama_env):
         response = client.post("/v1/plan", json=_request())
     assert response.status_code == 200
     assert response.json() == {
-        "actions": [{"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}]
+        "actions": [{"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}]
     }
 
 
@@ -100,7 +100,7 @@ def test_scroll_direction_maps_to_amount(ollama_env):
 
 def test_postscan_blocks_llm_pii_leak_with_502(ollama_env):
     result = PlanResult(
-        action=PlannedAction(type="TYPE", selector="#email", value="user@example.test"),
+        action=PlannedAction(type="TYPE", controlId="CONTROL_1", value="user@example.test"),
         done=False,
         reason="filling with the user's email",
     )
@@ -137,11 +137,11 @@ def test_malformed_json_fails_closed_with_502(ollama_env):
 def test_request_provider_routes_to_ollama_over_env(monkeypatch):
     # Env says deterministic; the request explicitly asks for ollama.
     monkeypatch.delenv("AGENT_PROVIDER", raising=False)
-    result = PlanResult(action=PlannedAction(type="CLICK", selector="#submit"), done=False, reason="go")
+    result = PlanResult(action=PlannedAction(type="CLICK", controlId="CONTROL_1"), done=False, reason="go")
     with patch("app.ollama_provider.httpx.post", _mock_ollama(result)) as post_mock:
         response = client.post("/v1/plan", json=_request(provider="ollama"))
     assert response.status_code == 200
-    assert response.json()["actions"] == [{"action": "CLICK", "target": "#submit"}]
+    assert response.json()["actions"] == [{"action": "CLICK", "target": "CONTROL_1"}]
     post_mock.assert_called_once()
 
 
@@ -151,7 +151,7 @@ def test_request_provider_deterministic_overrides_env(ollama_env):
         response = client.post("/v1/plan", json=_request(provider="deterministic"))
     assert response.status_code == 200
     assert response.json()["actions"] == [
-        {"action": "TYPE", "target": "#email", "value": "USER_EMAIL_1"}
+        {"action": "TYPE", "target": "CONTROL_1", "value": "USER_EMAIL_1"}
     ]
     post_mock.assert_not_called()
 

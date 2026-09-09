@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { createPrivacyFirewall } from '../../extension/src/firewall';
 import type { RemoteAgentRequest, SanitizedNode } from '../../extension/src/types/contracts';
 
-function node(partial: Partial<SanitizedNode> & { selector: string }): SanitizedNode {
+function node(partial: Partial<SanitizedNode> & { controlId: string }): SanitizedNode {
   return { tag: 'input', filled: false, disabled: false, ...partial };
 }
 
 function cleanRequest(partial: Partial<RemoteAgentRequest> = {}): RemoteAgentRequest {
   return {
     taskObjective: 'fill the form and submit',
-    sanitizedPageStructure: [node({ selector: '#email', inputType: 'email', label: 'Email' })],
+    sanitizedPageStructure: [node({ controlId: 'CONTROL_1', inputType: 'email', label: 'Email' })],
     sanitizedVisibleText: 'Email [SET] — welcome to the demo form',
     aliases: [{ alias: 'USER_EMAIL_1', category: 'EMAIL' }],
     availableActions: ['CLICK', 'TYPE', 'SELECT', 'SCROLL', 'NAVIGATE'],
@@ -35,7 +35,7 @@ describe('privacy firewall', () => {
     const verdict = await createPrivacyFirewall().inspect(
       cleanRequest({
         sanitizedPageStructure: [
-          node({ selector: '#a', label: 'Owner: 555-123-4567' }),
+          node({ controlId: 'CONTROL_1', label: 'Owner: 555-123-4567' }),
         ],
       }),
     );
@@ -64,6 +64,14 @@ describe('privacy firewall', () => {
     expect((await firewall.inspect(null as unknown as RemoteAgentRequest)).allowed).toBe(false);
     const partial = { taskObjective: 'x' } as unknown as RemoteAgentRequest;
     expect((await firewall.inspect(partial)).reason).toBe('FIREWALL_MALFORMED');
+  });
+
+  it('rejects selector-shaped and page-derived control targets', async () => {
+    const firewall = createPrivacyFirewall();
+    const selector = cleanRequest({
+      sanitizedPageStructure: [node({ controlId: '[name="CANARY_EMAIL_001@example.test"]' })],
+    });
+    expect((await firewall.inspect(selector)).reason).toBe('FIREWALL_MALFORMED');
   });
 
   it('fails closed on bad alias grammar and bad availableActions', async () => {
