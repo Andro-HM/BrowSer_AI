@@ -11,11 +11,13 @@ import { createRemoteHttpAgentGateway } from '../agent/remote';
 import { createActionBridge } from '../actions';
 import { createPrivacyFirewall } from '../firewall';
 import { createDeterministicPlanner } from '../agent/planner';
-import { getNavigationAllowlist } from '../agent/session-policy';
+import { createSessionNavigationPolicy } from '../agent/session-policy';
 import { DEFAULT_ACTION_POLICY } from '../actions/validate';
 import { createLocalVault } from '../vault';
 import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
 import { recordEvent, sessionTelemetry } from './telemetry-session';
+import { getVisualService } from './visual-service';
+import { recordVisualStats } from './visual-stats';
 
 type RunState = 'idle' | 'running' | 'done';
 
@@ -55,6 +57,7 @@ export function AgentTask() {
       // ONE vault shared by enforcement (writes aliases) and the bridge (resolves them) —
       // the alias→value mapping lives only here, in memory, for this run.
       const vault = createLocalVault();
+      const navigationPolicy = createSessionNavigationPolicy();
       // ONE firewall shared by the loop gate and the remote gateway's pre-transmit gate.
       const firewall = createPrivacyFirewall();
       // Planner mode: Local AI (Ollama) and Gemini go through the backend over the SAME
@@ -80,17 +83,24 @@ export function AgentTask() {
         gateway,
         provider,
         navigationAllowlist: allowlist,
+        navigationPolicy,
         bridge: createActionBridge({
           vault,
-          policy: () => ({ ...DEFAULT_ACTION_POLICY, navigationAllowlist: [...getNavigationAllowlist()] }),
+          policy: () => ({ ...DEFAULT_ACTION_POLICY, navigationAllowlist: [...navigationPolicy.get()] }),
           onAliasResolved: (alias) => recordEvent({ type: 'ALIAS_RESOLVED', alias }),
         }),
         firewall,
         scan: () => chrome.runtime.sendMessage({ type: SCAN_PAGE }) as Promise<ScanPageResponse>,
+        observeVisual: async (snapshot) => {
+          const visual = await getVisualService().run(snapshot);
+          recordVisualStats(visual);
+          return visual;
+        },
       });
       const { stageMs } = runResult;
       for (const [name, ms] of [
         ['agent.scan', stageMs.scanMs],
+        ['agent.visual', stageMs.visualMs],
         ['agent.enforce', stageMs.enforceMs],
         ['agent.plan', stageMs.planMs],
         ['agent.execute', stageMs.executeMs],
@@ -108,7 +118,7 @@ export function AgentTask() {
         reason: 'LOOP_CRASHED',
         steps: [],
         actionsExecuted: 0,
-        stageMs: { scanMs: 0, enforceMs: 0, planMs: 0, executeMs: 0, totalMs: 0 },
+        stageMs: { scanMs: 0, visualMs: 0, enforceMs: 0, planMs: 0, executeMs: 0, totalMs: 0 },
       });
     }
   };

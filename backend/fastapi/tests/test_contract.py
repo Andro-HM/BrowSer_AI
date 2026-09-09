@@ -47,3 +47,10 @@ def test_docs_example_rejected_without_strict_mode():
     response = client.post("/v1/plan", json=payload)
     assert response.status_code == 422
     assert response.json()["detail"] == {"error": "invalid_privacy_mode", "allowed": ["strict"]}
+
+
+def test_invalid_body_does_not_echo_sensitive_input():
+    canary = "CANARY_EMAIL_001@example.test"
+    response = client.post("/v1/plan", json={**EXAMPLE_REQUEST, "screenshot": canary})
+    assert response.status_code == 422
+    assert canary not in response.text

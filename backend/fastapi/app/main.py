@@ -12,6 +12,7 @@ import os
 import sys
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from slowapi import Limiter
@@ -20,7 +21,7 @@ from slowapi.util import get_remote_address
 
 from .agent import PlanRequest, plan_actions
 from .llm_common import LLMPIILeakError, LLMUnavailableError
-from .pii_scan import scan_pii
+from .pii_scan import contains_pixel_payload, scan_pii
 
 logger = logging.getLogger("privagent-backend")
 
@@ -63,6 +64,16 @@ app = FastAPI(title="PrivAgent Backend", version="0.0.0")
 app.state.limiter = limiter
 
 
+@app.exception_handler(RequestValidationError)
+def validation_error_handler(_request: Request, error: RequestValidationError) -> JSONResponse:
+    """Never reflect rejected raw input in a privacy-boundary error response."""
+    safe = [
+        {"type": item.get("type"), "loc": item.get("loc"), "msg": item.get("msg")}
+        for item in error.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": safe})
+
+
 @app.exception_handler(RateLimitExceeded)
 async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     return JSONResponse(status_code=429, content={"error": "rate_limited"})
@@ -100,6 +111,8 @@ def _plan_impl(payload: PlanRequest) -> dict:
         struct_texts.append(payload.pageOrigin)
     if scan_pii(payload.taskObjective, payload.sanitizedVisibleText, *struct_texts):
         raise HTTPException(status_code=422, detail="Raw PII detected in outbound request")
+    if contains_pixel_payload(payload.taskObjective, payload.sanitizedVisibleText, *struct_texts):
+        raise HTTPException(status_code=422, detail="Encoded media detected in outbound request")
 
     # PRIVACY-MODE gate (fail closed): only "strict" is implemented anywhere
     # (backend, extension loop, firewall, all tests). Anything else cannot be

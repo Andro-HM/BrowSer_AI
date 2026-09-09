@@ -93,6 +93,17 @@ function payloadContainsDetectablePII(request: RemoteAgentRequest): boolean {
   return texts.some((text) => detectPII(text).length > 0);
 }
 
+const MEDIA_DATA_URL = /data:(?:image|video|audio)\//i;
+const BASE64_RUN = /[A-Za-z0-9+/]{256,}={0,2}/;
+function containsPixelPayload(request: RemoteAgentRequest): boolean {
+  const texts: string[] = [request.sanitizedVisibleText, request.taskObjective];
+  for (const node of request.sanitizedPageStructure) {
+    if (node.label !== undefined) texts.push(node.label);
+    if (node.name !== undefined) texts.push(node.name);
+  }
+  return texts.some((text) => MEDIA_DATA_URL.test(text) || BASE64_RUN.test(text));
+}
+
 export function createPrivacyFirewall(): PrivacyFirewall {
   return {
     inspect(request: RemoteAgentRequest): Promise<FirewallVerdict> {
@@ -185,6 +196,7 @@ export function createPrivacyFirewall(): PrivacyFirewall {
       if (payloadContainsDetectablePII(request)) {
         return Promise.resolve(deny('FIREWALL_PII_DETECTED'));
       }
+      if (containsPixelPayload(request)) return Promise.resolve(deny('FIREWALL_PIXEL_PAYLOAD'));
 
       return Promise.resolve(allow());
     },

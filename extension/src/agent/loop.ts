@@ -16,8 +16,10 @@
 
 import type {
   AgentAction,
+  DomVisualSnapshot,
   RemoteAgentRequest,
   SanitizedNode,
+  VisualPerceptionResult,
 } from '../types/contracts';
 import type { ScanPageResponse } from '../types/messages';
 import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
@@ -28,7 +30,7 @@ import { enforcePrivacy } from '../sanitizer';
 import type { LocalVault } from '../vault';
 import type { PrivacyFirewall } from '../firewall';
 import type { AgentGateway } from './index';
-import { setNavigationAllowlist } from './session-policy';
+import type { SessionNavigationPolicy } from './session-policy';
 
 /** One executed step, recorded for the UI/audit. Alias-level only — never a resolved value. */
 export interface AgentStepRecord {
@@ -61,6 +63,7 @@ export interface AgentRunResult {
    */
   stageMs: {
     scanMs: number;
+    visualMs: number;
     enforceMs: number;
     planMs: number;
     executeMs: number;
@@ -86,10 +89,13 @@ export interface AgentLoopOptions {
    * (origin only, never the full URL). Empty when no origin is known (fail closed).
    */
   navigationAllowlist?: string[];
+  navigationPolicy?: SessionNavigationPolicy;
+  /** Local DOM-first perception. Its findings stay local and feed policy only. */
+  observeVisual?: (snapshot: DomVisualSnapshot) => Promise<VisualPerceptionResult>;
   /** Observe the active tab (wraps the SCAN_PAGE relay). Injectable for tests. */
   scan: () => Promise<ScanPageResponse>;
   /** Privacy-event sink (telemetry lands in M7; the loop only emits structured events). */
-  onEvent?: (event: { type: 'STEP' | 'STOP'; code: string; index: number }) => void;
+  onEvent?: (event: { type: 'STEP' | 'STOP' | 'VISUAL'; code: string; index: number }) => void;
 }
 
 const DEFAULT_MAX_STEPS = 8;
@@ -129,7 +135,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const steps: AgentStepRecord[] = [];
   let actionsExecuted = 0;
-  const stage = { scanMs: 0, enforceMs: 0, planMs: 0, executeMs: 0 };
+  const stage = { scanMs: 0, visualMs: 0, enforceMs: 0, planMs: 0, executeMs: 0 };
   const startedAt = performance.now();
 
   // Every terminal path funnels through stop() — completed, blocked, error, or
@@ -170,6 +176,18 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
       return stop('error', observed.error ?? 'SCAN_FAILED');
     }
 
+    let visual: VisualPerceptionResult | undefined;
+    if (options.observeVisual !== undefined && observed.snapshot != null) {
+      const visualStartedAt = performance.now();
+      try {
+        visual = await options.observeVisual(observed.snapshot);
+      } catch {
+        visual = { status: 'unavailable', supported: false, reason: 'VISUAL_OBSERVER_FAILED', observations: [], metrics: { candidatesConsidered: 0, regionsSelected: 0, regionsProcessed: 0, regionsFromCache: 0, durationMs: performance.now() - visualStartedAt } };
+      }
+      stage.visualMs += performance.now() - visualStartedAt;
+      options.onEvent?.({ type: 'VISUAL', code: visual.reason ?? visual.status, index });
+    }
+
     // 2 — enforce locally: alias every recoverable value into the LOCAL vault.
     // Multi-signal detection (blueprint §5): pattern evidence (detectPII) + label
     // evidence (detectLabeledValues) — names/addresses/credential-like values that no
@@ -182,7 +200,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
     const visualContext = classifyPage(observed.structure, observed.pageText);
     const enforceStartedAt = performance.now();
     const enforcement = await enforcePrivacy({
-      signals: { entities, visualContext, restricted: false },
+      signals: { entities, visual, visualContext, restricted: false },
       pageText: observed.pageText,
       sessionId: options.sessionId,
       vault: options.vault,
@@ -204,7 +222,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
         allowlist = [];
       }
     }
-    setNavigationAllowlist(allowlist);
+    options.navigationPolicy?.set(allowlist);
 
     let pageOrigin: string | undefined;
     if (observed.snapshot?.url) {

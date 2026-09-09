@@ -66,6 +66,13 @@ describe('privacy firewall', () => {
     expect((await firewall.inspect(partial)).reason).toBe('FIREWALL_MALFORMED');
   });
 
+  it('blocks encoded media even when it contains no detectable PII', async () => {
+    const verdict = await createPrivacyFirewall().inspect(
+      cleanRequest({ sanitizedVisibleText: `data:image/png;base64,${'A'.repeat(300)}` }),
+    );
+    expect(verdict.reason).toBe('FIREWALL_PIXEL_PAYLOAD');
+  });
+
   it('rejects selector-shaped and page-derived control targets', async () => {
     const firewall = createPrivacyFirewall();
     const selector = cleanRequest({

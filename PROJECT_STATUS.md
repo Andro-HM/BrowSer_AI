@@ -19,6 +19,17 @@ this host has no `python` executable.**
 - Remaining validation: backend pytest and browser E2E require a working local Python and
   Playwright environment respectively.
 
+## M11 — Friend-2 critical privacy regressions restored
+
+**Status: COMPLETE for available local gates; backend pytest pending a Python runtime.**
+
+- Agent runs now invoke the shared DOM-first visual service; local OCR/visual findings feed
+  policy enforcement and never enter a planner request.
+- Navigation allowlists are per-run handles, not mutable module-global state.
+- Extension and backend reject encoded image/video/audio/base64 payloads.
+- Backend request models forbid unknown fields and 422 validation responses omit rejected input.
+- Gates run: typecheck, 359 Vitest tests, lint, build, and isolated agent Playwright E2E — PASS.
+
 
 ---
 

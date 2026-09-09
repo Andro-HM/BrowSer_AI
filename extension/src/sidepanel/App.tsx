@@ -10,20 +10,18 @@ import { useState } from 'react';
 import { VisualStatus } from './VisualStatus';
 import { AgentTask } from './AgentTask';
 import { detectPII } from '../perception/pii';
-import { createVisualPerceptionService } from '../perception/visual';
-import type { VisualPerceptionService } from '../perception/visual';
 import { enforcePrivacy } from '../sanitizer';
 import { classifyPage } from '../perception/visual/pageClassifier';
 import { toSensitiveCategory } from '../sanitizer/alias';
 import { createLocalVault } from '../vault';
 import type { PolicySignals, RiskSeverity } from '../types/contracts';
-import { SCAN_PAGE, SCROLL_VIEWPORT, type ScanPageResponse, type ScrollViewportResponse } from '../types/messages';
+import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
 import { buildScanSummary, type ScanFindingView, type ScanSummary } from '../scan';
 import { ocrTrace } from '../diag/ocr-trace';
 import { recordEvent, sessionTelemetry } from './telemetry-session';
 import { TelemetryPanel } from './TelemetryPanel';
 import { recordVisualStats } from './visual-stats';
-import { captureViaBackground } from './capture';
+import { getVisualService } from './visual-service';
 
 type ScanState = 'idle' | 'scanning' | 'done' | 'restricted' | 'error';
 
@@ -33,23 +31,6 @@ type ScanState = 'idle' | 'scanning' | 'done' | 'restricted' | 'error';
  * background worker; carries only an offset. Injected into the M3 service so that ABSENT
  * this dependency the service inspects only the visible viewport (honest limit).
  */
-async function scrollViewport(top: number): Promise<void> {
-  const response: ScrollViewportResponse = await chrome.runtime.sendMessage({
-    type: SCROLL_VIEWPORT,
-    top,
-  });
-  if (response?.error !== undefined) throw new Error(response.error);
-  // Let the newly revealed band paint (and any lazy images load) before capture.
-  await new Promise((resolve) => setTimeout(resolve, 150));
-}
-
-// Created on first scan so simply opening the panel loads no visual provider. Mirrors
-// the lazy pattern in VisualStatus; capture/analysis must run in this document context.
-let visualService: VisualPerceptionService | null = null;
-function getVisualService(): VisualPerceptionService {
-  visualService ??= createVisualPerceptionService({ captureViewport: captureViaBackground, scrollViewport });
-  return visualService;
-}
 
 const SEVERITY_DOT: Record<RiskSeverity, string> = {
   critical: '🔴',

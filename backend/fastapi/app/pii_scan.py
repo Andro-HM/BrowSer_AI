@@ -34,6 +34,13 @@ UPI_HANDLES = frozenset(
     }
 )
 UPI_CONTEXT_RE = re.compile(r"(upi|vpa|\bpay\b)", re.IGNORECASE)
+MEDIA_DATA_RE = re.compile(r"data:(?:image|video|audio)/", re.IGNORECASE)
+BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{256,}={0,2}")
+
+
+def contains_pixel_payload(*texts: str | None) -> bool:
+    """Reject inline media/encoded captures independently of PII pattern matching."""
+    return any(text is not None and (MEDIA_DATA_RE.search(text) or BASE64_RUN_RE.search(text)) for text in texts)
 
 
 def _luhn_valid(value: str) -> bool:
