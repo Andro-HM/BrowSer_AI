@@ -57,10 +57,19 @@ export interface AliasAllocator {
  * (stability); distinct values of the same category get incrementing indices
  * (uniqueness). Deterministic given the order values are first presented.
  */
-export function createAliasAllocator(): AliasAllocator {
+export function createAliasAllocator(reserved: readonly AliasBinding[] = []): AliasAllocator {
   const byValue = new Map<string, AliasBinding>();
   const counters = new Map<SensitiveCategory, number>();
   const order: AliasBinding[] = [];
+
+  for (const binding of reserved) {
+    const prefix = `USER_${binding.category}_`;
+    if (!binding.alias.startsWith(prefix)) continue;
+    const index = Number(binding.alias.slice(prefix.length));
+    if (Number.isSafeInteger(index) && index > (counters.get(binding.category) ?? 0)) {
+      counters.set(binding.category, index);
+    }
+  }
 
   return {
     aliasFor(value, category) {

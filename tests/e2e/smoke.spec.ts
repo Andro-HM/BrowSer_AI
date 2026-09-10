@@ -4,7 +4,7 @@
 // `chrome-extension://<extension-id>/src/sidepanel/index.html` — an unsubstituted
 // placeholder pointing at a path the build does not emit. It could never have passed.
 
-import { expect, openTestPage, test, PANEL_PATH } from './fixtures';
+import { expect, openDeveloperDiagnostics, openTestPage, test, PANEL_PATH } from './fixtures';
 
 const TEXT_PAGE = `<!doctype html>
 <html><body>
@@ -34,6 +34,11 @@ test('side panel document renders without console errors', async ({ extContext, 
   await page.goto(`chrome-extension://${extensionId}/${PANEL_PATH}`);
 
   await expect(page.locator('h1')).toHaveText('PrivAgent');
+  await expect(page.getByRole('tab')).toHaveCount(3);
+  await expect(page.getByRole('tab', { name: 'Run Agent' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Privacy Audit' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Secure Vault' })).toBeVisible();
+  await openDeveloperDiagnostics(page);
   await expect(page.getByRole('button', { name: 'Scan Page' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Visual perception' })).toBeVisible();
   expect(errors).toEqual([]);
@@ -45,6 +50,7 @@ test('scans a real page into a concise summary, with no raw dump', async ({
   panel,
 }) => {
   await openTestPage(extContext, TEXT_PAGE);
+  await openDeveloperDiagnostics(panel);
 
   await panel.getByRole('button', { name: 'Scan Page' }).dispatchEvent('click');
 

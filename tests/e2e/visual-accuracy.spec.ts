@@ -14,7 +14,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test } from './fixtures';
+import { expect, openDeveloperDiagnostics, test } from './fixtures';
 import { openTestPage } from './fixtures';
 
 // Serial: one measurement run, deterministic relay timing.
@@ -82,7 +82,7 @@ for (const page of PAGES) {
   }) => {
     const tab = await openTestPage(extContext, imagePage(page.images));
 
-
+    await openDeveloperDiagnostics(panel);
     // 1 — the dedicated visual check: the wasm engine must actually RUN.
     await panel.getByRole('button', { name: 'Run Visual Check' }).dispatchEvent('click');
     await expect(panel.getByText(/OCR:/)).toBeVisible({ timeout: 30_000 });

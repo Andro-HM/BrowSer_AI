@@ -15,7 +15,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test } from './fixtures';
+import { expect, openDeveloperDiagnostics, test } from './fixtures';
 import { openTestPage } from './fixtures';
 
 test.describe.configure({ mode: 'serial' });
@@ -39,6 +39,7 @@ test('BlazeFace detects and blurs a real face before OCR (on-device WASM)', asyn
   panel,
 }) => {
   await openTestPage(extContext, FACE_PAGE);
+  await openDeveloperDiagnostics(panel);
 
   await panel.getByRole('button', { name: 'Run Visual Check' }).dispatchEvent('click');
   await expect(panel.getByText('OCR: OCR/vision engine ran')).toBeVisible({ timeout: 30_000 });

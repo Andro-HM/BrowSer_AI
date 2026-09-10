@@ -2,10 +2,10 @@
 //
 // Invariant under test (CONTRIBUTING.md §5 Rule 1/2/4): a raw protected value handed to
 // M5 CANNOT appear in the enforcement result, in a log line, or on the network.
-// The raw value is recoverable ONLY from the local, in-memory vault, and only via
-// its alias — never from the alias directory itself. The source is also scanned
-// (comments stripped) to prove it contains no logging, egress, or persistent
-// storage. Synthetic canaries only (CONTRIBUTING.md §13/§15).
+// The raw value is recoverable from a local vault only via its alias — never from
+// the alias directory itself. The source is also scanned (comments stripped) to
+// prove it contains no logging/egress and that persistence is isolated to the
+// ciphertext-only IndexedDB adapter. Synthetic canaries only (§13/§15).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -155,7 +155,7 @@ describe('M5 performs no logging or network I/O', () => {
   });
 });
 
-describe('the M5 source contains no logging, egress, or persistent storage', () => {
+describe('the M5 source contains no logging or egress and isolates encrypted persistence', () => {
   it('has no console statement in the sanitizer or vault sources', () => {
     const files = [...sourceFiles(SANITIZER_SRC), ...sourceFiles(VAULT_SRC)];
     expect(files.length).toBeGreaterThan(0);
@@ -165,13 +165,18 @@ describe('the M5 source contains no logging, egress, or persistent storage', () 
     expect(offenders).toEqual([]);
   });
 
-  it('has no network or persistent-storage call in the sanitizer or vault sources', () => {
+  it('has no network call and no persistence outside the encrypted IndexedDB adapter', () => {
     const files = [...sourceFiles(SANITIZER_SRC), ...sourceFiles(VAULT_SRC)];
     const offenders = files.filter((file) =>
-      /\b(fetch|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|indexedDB)\b|chrome\s*\.\s*storage/.test(
+      /\b(fetch|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage)\b|chrome\s*\.\s*storage/.test(
         codeOnly(readFileSync(file, 'utf8')),
       ),
     );
     expect(offenders).toEqual([]);
+
+    const indexedDbUsers = files.filter((file) =>
+      /\bindexedDB\b/.test(codeOnly(readFileSync(file, 'utf8'))),
+    );
+    expect(indexedDbUsers).toEqual([join(VAULT_SRC, 'indexeddb.ts')]);
   });
 });

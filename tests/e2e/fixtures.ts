@@ -96,13 +96,27 @@ export async function openTestPage(context: BrowserContext, html: string): Promi
  * against unfocused tabs. React's handler still receives the bubbled event.
  */
 export async function runVisualCheck(panel: Page): Promise<void> {
+  await openDeveloperDiagnostics(panel);
   await panel.getByRole('button', { name: 'Run Visual Check' }).dispatchEvent('click');
   await expect(panel.getByRole('button', { name: 'Run Visual Check' })).toBeEnabled();
 }
 
+/** Opens the deliberately secondary manual scan/vision surface. */
+export async function openDeveloperDiagnostics(panel: Page): Promise<void> {
+  await panel.getByRole('tab', { name: 'Privacy Audit' }).click();
+  const diagnostics = panel.getByText('Developer diagnostics', { exact: true });
+  const details = diagnostics.locator('..');
+  if ((await details.getAttribute('open')) === null) {
+    await diagnostics.click();
+  }
+}
+
 /** The status line rendered by the VisualStatus widget. */
 export function statusLine(panel: Page) {
-  return panel.locator('section p.font-medium');
+  return panel
+    .getByRole('heading', { name: 'Visual perception' })
+    .locator('..')
+    .locator('p.font-medium');
 }
 
 export { expect } from '@playwright/test';

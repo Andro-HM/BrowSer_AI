@@ -17,10 +17,13 @@
 
 import type {
   AgentAction,
+  AliasBinding,
   DomVisualSnapshot,
+  EnforcementResult,
   LastExecutedAction,
   RemoteAgentRequest,
   SanitizedNode,
+  SensitiveCategory,
   VisualPerceptionResult,
 } from '../types/contracts';
 import type { ObservationContext, ScanPageResponse } from '../types/messages';
@@ -33,6 +36,7 @@ import type { LocalVault } from '../vault';
 import type { PrivacyFirewall } from '../firewall';
 import type { AgentGateway } from './index';
 import type { SessionNavigationPolicy } from './session-policy';
+import type { AgentProviderLabel, AgentRunAuditSink, SafeRunFinding } from './audit';
 
 /** One executed step, recorded for the UI/audit. Alias-level only — never a resolved value. */
 export interface AgentStepRecord {
@@ -92,6 +96,10 @@ export interface AgentLoopOptions {
    */
   navigationAllowlist?: string[];
   navigationPolicy?: SessionNavigationPolicy;
+  /** Unlocked persistent aliases: metadata only, never their values. */
+  availableAliases?: readonly AliasBinding[];
+  /** In-memory, safe-metadata audit sink for the current panel run. */
+  audit?: AgentRunAuditSink;
   /** Local DOM-first perception. Its findings stay local and feed policy only. */
   observeVisual?: (
     snapshot: DomVisualSnapshot,
@@ -104,6 +112,79 @@ export interface AgentLoopOptions {
 }
 
 const DEFAULT_MAX_STEPS = 8;
+
+function mergeAliases(
+  persistent: readonly AliasBinding[],
+  transient: readonly AliasBinding[],
+): AliasBinding[] {
+  const merged = new Map<string, AliasBinding>();
+  for (const binding of [...persistent, ...transient]) merged.set(binding.alias, { ...binding });
+  return [...merged.values()];
+}
+
+function providerLabel(provider: RemoteAgentRequest['provider']): AgentProviderLabel {
+  return provider === undefined || provider === 'deterministic' ? 'offline' : provider;
+}
+
+async function detectVisiblePersistentValues(
+  pageText: string,
+  bindings: readonly AliasBinding[],
+  vault: LocalVault,
+): Promise<ReturnType<typeof detectPII>> {
+  const findings: ReturnType<typeof detectPII> = [];
+  for (const binding of bindings) {
+    const value = await vault.resolve(binding.alias);
+    if (value === undefined || value.length === 0 || !pageText.includes(value)) continue;
+    findings.push({
+      id: `persistent-${binding.alias}`,
+      category: binding.category,
+      source: 'DOM',
+      text: value,
+      confidence: 1,
+      reasons: ['Matched an unlocked local vault value'],
+    });
+  }
+  return findings;
+}
+
+function safeAuditFindings(
+  enforcement: EnforcementResult,
+  visual: VisualPerceptionResult | undefined,
+): SafeRunFinding[] {
+  const aliasCategories = new Map(
+    enforcement.aliases.map((binding) => [binding.alias, binding.category]),
+  );
+  const visualCategories = new Map<string, SensitiveCategory>();
+  for (const finding of visual?.contentFindings ?? []) {
+    const id = `${finding.regionId}#${finding.bbox.join(',')}`;
+    visualCategories.set(id, finding.category);
+  }
+  const regionCounters = new Map<string, number>();
+  return enforcement.findings.map((finding) => {
+    const source = finding.ref.source;
+    const count = (regionCounters.get(source) ?? 0) + 1;
+    regionCounters.set(source, count);
+    const id = finding.alias ?? `${source}_REGION_${count}`;
+    return {
+      id,
+      category:
+        (finding.alias === undefined ? undefined : aliasCategories.get(finding.alias)) ??
+        (finding.ref.findingId === undefined
+          ? undefined
+          : visualCategories.get(finding.ref.findingId)) ??
+        'CUSTOM',
+      source,
+      disposition:
+        finding.action === 'BLOCK'
+          ? 'blocked'
+          : finding.disposition === 'aliased'
+            ? 'aliased'
+            : finding.disposition === 'masked'
+              ? 'masked'
+              : 'blocked',
+    };
+  });
+}
 
 /**
  * Build the remote-safe `SanitizedNode` list from the raw internal structure. A label or
@@ -244,9 +325,20 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
     // Multi-signal detection (blueprint §5): pattern evidence (detectPII) + label
     // evidence (detectLabeledValues) — names/addresses/credential-like values that no
     // pattern can catch are still protected, or the leakage sentinel will catch us.
+    let persistentValueEntities: ReturnType<typeof detectPII>;
+    try {
+      persistentValueEntities = await detectVisiblePersistentValues(
+        observed.pageText,
+        options.availableAliases ?? [],
+        options.vault,
+      );
+    } catch {
+      return stop('not_enforced', 'VAULT_VALUE_SCAN_FAILED');
+    }
     const entities = [
       ...detectPII(observed.pageText),
       ...detectLabeledValues(observed.pageText),
+      ...persistentValueEntities,
     ];
     // M7.5 — page-type classification (payment/auth pages force a SANITIZE floor).
     const visualContext = classifyPage(observed.structure, observed.pageText);
@@ -256,8 +348,10 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
       pageText: observed.pageText,
       sessionId: options.sessionId,
       vault: options.vault,
+      reservedAliases: options.availableAliases,
     });
     stage.enforceMs += performance.now() - enforceStartedAt;
+    options.audit?.recordFindings(safeAuditFindings(enforcement, visual));
     // Fail closed: a page we cannot fully neutralize (or that carries a critical
     // credential) never produces an outbound request.
     if (enforcement.blocked) return stop('blocked', 'PAGE_BLOCKED');
@@ -298,7 +392,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
       ...(options.provider !== undefined ? { provider: options.provider } : {}),
       sanitizedPageStructure: toSanitizedNodes(observed.structure),
       sanitizedVisibleText: enforcement.sanitizedText,
-      aliases: enforcement.aliases,
+      aliases: mergeAliases(options.availableAliases ?? [], enforcement.aliases),
       availableActions: [...ALLOWED_ACTION_KINDS],
       policy: { privacyMode: 'strict', navigationAllowlist: allowlist },
       ...(lastExecuted !== null ? { lastExecutedAction: lastExecuted } : {}),
@@ -307,6 +401,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
     // 4 — firewall: the only path to egress. A deny stops the loop, visibly.
     const verdict = await options.firewall.inspect(request);
     if (!verdict.allowed) return stop('firewall_blocked', verdict.reason);
+    options.audit?.recordApprovedOutbound(request, providerLabel(options.provider));
 
     // 5 — plan.
     let planned: AgentAction[];

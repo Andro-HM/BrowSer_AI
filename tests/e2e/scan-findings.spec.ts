@@ -10,7 +10,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, openTestPage, test } from './fixtures';
+import { expect, openDeveloperDiagnostics, openTestPage, test } from './fixtures';
 
 const SAMPLE_HTML = readFileSync(
   join(process.cwd(), 'tests', 'fixtures', 'sensitive-sample.html'),
@@ -32,6 +32,7 @@ test('renders a concise multi-region summary and blocks on a critical credential
   panel,
 }) => {
   await openTestPage(extContext, SAMPLE_HTML);
+  await openDeveloperDiagnostics(panel);
   await panel.getByRole('button', { name: 'Scan Page' }).dispatchEvent('click');
 
   await expect(panel.getByText('Scan: ✓ Complete')).toBeVisible();

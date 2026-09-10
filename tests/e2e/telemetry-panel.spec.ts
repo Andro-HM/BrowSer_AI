@@ -4,7 +4,7 @@
 // ALIAS_RESOLVED/TASK_RESULT + agent.* timings. The dashboard must show them — and
 // must never show a raw value.
 
-import { expect, test } from './fixtures';
+import { expect, openDeveloperDiagnostics, test } from './fixtures';
 import { openTestPage } from './fixtures';
 
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
@@ -31,11 +31,13 @@ test('telemetry dashboard fills from scan + agent run, never showing raw values'
   const tab = await openTestPage(extContext, PAGE);
 
   // 1 — a scan feeds event counts + stage timings.
+  await openDeveloperDiagnostics(panel);
   await panel.getByRole('button', { name: 'Scan Page' }).dispatchEvent('click');
   await expect(panel.getByTestId('telemetry')).toContainText('DETECTED');
   await expect(panel.getByTestId('telemetry')).toContainText('SANITIZED');
 
   // 2 — an agent run adds alias resolutions, task result and agent.* stage timings.
+  await panel.getByRole('tab', { name: 'Run Agent' }).click();
   await panel.getByPlaceholder(/fill the form/).fill('fill the form with my details and submit');
   await tab.bringToFront();
   // Local AI defaults ON (demo mode); e2e runs offline, so select the
@@ -55,6 +57,7 @@ test('telemetry dashboard fills from scan + agent run, never showing raw values'
   expect(telemetryText).not.toContain('555-010-0009');
 
   // 4 — reset clears everything.
+  await openDeveloperDiagnostics(panel);
   await panel.getByRole('button', { name: 'Reset' }).dispatchEvent('click');
   await expect(panel.getByTestId('telemetry')).toContainText('No telemetry yet');
 });

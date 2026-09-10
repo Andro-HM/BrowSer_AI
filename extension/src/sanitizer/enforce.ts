@@ -22,6 +22,7 @@ import type {
   EnforcementResult,
   FindingDisposition,
   FindingEnforcement,
+  AliasBinding,
   PolicySignals,
   SensitiveEntity,
 } from '../types/contracts';
@@ -41,6 +42,8 @@ export interface EnforceInput {
   vault: LocalVault;
   /** Injectable clock for `AliasRecord.createdAt`. Defaults to Date.now. */
   now?: () => number;
+  /** Existing persistent aliases whose indices transient allocation must not reuse. */
+  reservedAliases?: readonly AliasBinding[];
 }
 
 /** Actions for which a recoverable raw text value must be removed from output. */
@@ -68,7 +71,7 @@ export async function enforcePrivacy(input: EnforceInput): Promise<EnforcementRe
     if (e && typeof e.id === 'string' && e.id.length > 0) entityById.set(e.id, e);
   }
 
-  const allocator = createAliasAllocator();
+  const allocator = createAliasAllocator(input.reservedAliases);
   const redactPairs: { value: string; alias: string }[] = [];
   const maskInputs: MaskInput[] = [];
   const findings: FindingEnforcement[] = [];

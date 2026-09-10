@@ -46,7 +46,11 @@ export interface ActionBridgeOptions {
     observation: ObservationContext,
   ) => Promise<ExecuteActionResponse>;
   /** Fired after a successful LOCAL alias resolution — metadata only, never the value. */
-  onAliasResolved?: (alias: string) => void;
+  onAliasResolved?: (
+    alias: string,
+    target: string,
+    action: 'TYPE' | 'SELECT',
+  ) => void;
 }
 
 export function createActionBridge(options: ActionBridgeOptions): ActionBridge {
@@ -75,7 +79,7 @@ export function createActionBridge(options: ActionBridgeOptions): ActionBridge {
       ) {
         const resolved = await vault.resolve(action.value);
         if (resolved === undefined) return { ok: false, code: 'ALIAS_UNKNOWN' };
-        options.onAliasResolved?.(action.value);
+        options.onAliasResolved?.(action.value, action.target, action.action);
         effective =
           action.action === 'TYPE'
             ? { action: 'TYPE', target: action.target, value: resolved }

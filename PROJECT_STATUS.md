@@ -1,9 +1,39 @@
 # PrivAgent — PROJECT_STATUS
 
-_Last updated: 2026-09-08_
+_Last updated: 2026-09-10_
 _Status: M0–M9 complete — extension, perception (Tesseract OCR, BlazeFace, OmniParser vision), policy, sanitization, agent loop, backend planners (deterministic/Gemini/Ollama), privacy hardening; AGPL-3.0 Combined Work (bundled icon-detect-640.onnx)._
 _Engineering rules: [CONTRIBUTING.md](CONTRIBUTING.md) (formerly `CLAUDE.md`; section
 numbers unchanged)._
+
+## Product/demo surface — persistent Secure Vault and run audit
+
+**Status: COMPLETE — all extension gates and the complete Playwright suite PASS.**
+
+- The normal side panel now has exactly three primary tabs: Run Agent, Privacy Audit,
+  and Secure Vault. Manual scan, visual checks, and telemetry remain available in a
+  collapsed Developer diagnostics section.
+- Secure Vault persists one versioned AES-GCM-256 ciphertext envelope in IndexedDB.
+  Its non-extractable key is derived locally with PBKDF2-SHA256 (random 16-byte salt,
+  600,000 iterations); passphrase/key/plaintext metadata are not persisted. Explicit
+  lock and panel teardown discard the unlocked state.
+- Persistent aliases are layered with the existing run-scoped vault. The planner sees
+  alias/category metadata only; TYPE/SELECT resolve locally, and `clearSession()` clears
+  only transient aliases. Re-observation now also recognizes arbitrary unlocked vault
+  values (including patternless name/address data) and sanitizes them before planning.
+- Privacy Audit is an in-memory view of the actual most recent run: safe findings,
+  exact firewall-approved request JSON, measured byte/control/alias counts, provider,
+  local alias-resolution events, and measured stage timings. It never renders stored
+  plaintext or pixels.
+- Added the deterministic Name/Email/Phone/Address/Submit fixture and a real Chromium
+  product E2E proving encrypted persistence across panel reload, re-unlock, four local
+  fills, submit, value-free audit, and locked-vault refusal before planning.
+- Gates run on 2026-09-10: `npm run typecheck` PASS; `npm run lint` PASS;
+  `npm test` PASS (46 files, 392 tests); `npm run build` PASS (109 modules);
+  `npm run e2e -- --workers=2` PASS (25 tests).
+- Backend code/provider architecture was not changed, so backend pytest was not run.
+  No live Zen/Gemini/Ollama request was made by the automated suite; the product E2E
+  uses the deterministic offline planner. Visual-only coordinate clicking remains
+  intentionally out of scope and unimplemented.
 
 ## M10 — Friend-2 opaque control handles
 

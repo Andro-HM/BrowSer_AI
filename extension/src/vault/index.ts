@@ -1,8 +1,9 @@
 import type { AliasRecord } from '../types/contracts';
 
-// Local identity vault (blueprint §6/§7). Stores alias↔value mappings ON-DEVICE
-// ONLY, in memory — never in chrome.storage, localStorage, IndexedDB, a file, a
-// log, or any remote payload (CONTRIBUTING.md §5 Rule 3/4). The mapping is the most
+// Transient local identity vault (blueprint §6/§7). Stores page-derived alias↔value
+// mappings ON-DEVICE and in memory only. Persistent personal details use the separately
+// audited AES-GCM vault exported below; neither mapping ever enters a remote payload.
+// The mapping is the most
 // sensitive artefact in the system: it is the one place a raw value sits beside
 // its alias, so it lives only for the lifetime of the extension context and is
 // wiped per session by `clearSession`.
@@ -55,3 +56,16 @@ export function createLocalVault(): LocalVault {
     },
   };
 }
+
+export { createLayeredVault } from './layered';
+export type { LayeredVault } from './layered';
+export { createSecurePersistentVault, PERSISTENT_VAULT_CATEGORIES } from './secure';
+export type {
+  AddPersistentDetail,
+  PersistentVaultCategory,
+  PersistentVaultEntryMetadata,
+  SecurePersistentVault,
+  SecurePersistentVaultOptions,
+} from './secure';
+export { createIndexedDbVaultStore } from './indexeddb';
+export type { EncryptedVaultEnvelope, EncryptedVaultStore } from './indexeddb';
