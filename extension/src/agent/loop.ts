@@ -23,7 +23,7 @@ import type {
   SanitizedNode,
   VisualPerceptionResult,
 } from '../types/contracts';
-import type { ScanPageResponse } from '../types/messages';
+import type { ObservationContext, ScanPageResponse } from '../types/messages';
 import { ALLOWED_ACTION_KINDS } from '../actions/kinds';
 import type { ActionBridge } from '../actions';
 import { detectLabeledValues, detectPII } from '../perception/pii';
@@ -93,8 +93,11 @@ export interface AgentLoopOptions {
   navigationAllowlist?: string[];
   navigationPolicy?: SessionNavigationPolicy;
   /** Local DOM-first perception. Its findings stay local and feed policy only. */
-  observeVisual?: (snapshot: DomVisualSnapshot) => Promise<VisualPerceptionResult>;
-  /** Observe the active tab (wraps the SCAN_PAGE relay). Injectable for tests. */
+  observeVisual?: (
+    snapshot: DomVisualSnapshot,
+    observation: ObservationContext,
+  ) => Promise<VisualPerceptionResult>;
+  /** Observe the run's pinned tab (wraps the targeted SCAN_PAGE relay). */
   scan: () => Promise<ScanPageResponse>;
   /** Privacy-event sink (telemetry lands in M7; the loop only emits structured events). */
   onEvent?: (event: { type: 'STEP' | 'STOP' | 'VISUAL'; code: string; index: number }) => void;
@@ -212,16 +215,24 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
     if (
       observed.error !== undefined ||
       typeof observed.pageText !== 'string' ||
-      !Array.isArray(observed.structure)
+      !Array.isArray(observed.structure) ||
+      typeof observed.observationEpoch !== 'string' ||
+      observed.observationEpoch.length === 0 ||
+      typeof observed.documentGeneration !== 'string' ||
+      observed.documentGeneration.length === 0
     ) {
       return stop('error', observed.error ?? 'SCAN_FAILED');
     }
+    const observation: ObservationContext = {
+      observationEpoch: observed.observationEpoch,
+      documentGeneration: observed.documentGeneration,
+    };
 
     let visual: VisualPerceptionResult | undefined;
     if (options.observeVisual !== undefined && observed.snapshot != null) {
       const visualStartedAt = performance.now();
       try {
-        visual = await options.observeVisual(observed.snapshot);
+        visual = await options.observeVisual(observed.snapshot, observation);
       } catch {
         visual = { status: 'unavailable', supported: false, reason: 'VISUAL_OBSERVER_FAILED', observations: [], metrics: { candidatesConsidered: 0, regionsSelected: 0, regionsProcessed: 0, regionsFromCache: 0, durationMs: performance.now() - visualStartedAt } };
       }
@@ -335,7 +346,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
     const executeStartedAt = performance.now();
     let outcome: ExecuteOutcome;
     try {
-      const response = await options.bridge.execute(action);
+      const response = await options.bridge.execute(action, observation);
       outcome = response.ok ? 'executed' : (response.code ?? 'EXEC_FAILED');
     } catch {
       outcome = 'EXEC_FAILED';

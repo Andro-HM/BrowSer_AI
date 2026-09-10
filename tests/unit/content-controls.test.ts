@@ -25,24 +25,64 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('opaque local control handles', () => {
   it('issues scan-local handles without page-derived text', () => {
-    const controls = createLocalControlRegistry();
-    controls.beginObservation();
+    const controls = createLocalControlRegistry({
+      documentGeneration: 'document-1',
+      nextObservationEpoch: () => 'observation-1',
+    });
+    const observation = controls.beginObservation();
     const first = controls.register(new FakeInput() as unknown as Element);
     const second = controls.register(new FakeInput() as unknown as Element);
     expect([first, second]).toEqual(['CONTROL_1', 'CONTROL_2']);
+    expect(observation).toEqual({
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
     expect(JSON.stringify([first, second])).not.toContain('example.test');
   });
 
   it('executes a current observed control and rejects invented or stale handles', () => {
-    const controls = createLocalControlRegistry();
+    let epoch = 0;
+    const controls = createLocalControlRegistry({
+      documentGeneration: 'document-1',
+      nextObservationEpoch: () => `observation-${++epoch}`,
+    });
     const input = new FakeInput();
-    controls.beginObservation();
+    const firstObservation = controls.beginObservation();
     const handle = controls.register(input as unknown as Element);
-    expect(executeControlAction({ action: 'TYPE', target: handle, value: 'safe' }, controls)).toEqual({ ok: true, code: 'OK' });
+    expect(executeControlAction(
+      { action: 'TYPE', target: handle, value: 'safe' },
+      controls,
+      firstObservation,
+    )).toEqual({ ok: true, code: 'OK' });
     expect(input.value).toBe('safe');
-    expect(executeControlAction({ action: 'CLICK', target: 'CONTROL_999' }, controls)).toEqual({ ok: false, code: 'CONTROL_UNKNOWN' });
-    expect(executeControlAction({ action: 'CLICK', target: '[name="CANARY_EMAIL_001@example.test"]' }, controls)).toEqual({ ok: false, code: 'CONTROL_UNKNOWN' });
+    expect(executeControlAction(
+      { action: 'CLICK', target: handle },
+      controls,
+      firstObservation,
+    )).toEqual({ ok: true, code: 'OK' });
+    expect(input.events).toContain('click');
+    expect(executeControlAction({ action: 'CLICK', target: 'CONTROL_999' }, controls, firstObservation)).toEqual({ ok: false, code: 'CONTROL_UNKNOWN' });
+    expect(executeControlAction({ action: 'CLICK', target: '[name="CANARY_EMAIL_001@example.test"]' }, controls, firstObservation)).toEqual({ ok: false, code: 'CONTROL_UNKNOWN' });
     controls.beginObservation();
-    expect(executeControlAction({ action: 'CLICK', target: handle }, controls)).toEqual({ ok: false, code: 'CONTROL_UNKNOWN' });
+    expect(executeControlAction({ action: 'CLICK', target: handle }, controls, firstObservation)).toEqual({ ok: false, code: 'OBSERVATION_STALE' });
+  });
+
+  it('invalidates on registry reset and rejects handles from a navigated/new document', () => {
+    const controls = createLocalControlRegistry({
+      documentGeneration: 'document-1',
+      nextObservationEpoch: () => 'observation-1',
+    });
+    const observation = controls.beginObservation();
+    const handle = controls.register(new FakeInput() as unknown as Element);
+
+    controls.invalidate();
+    expect(executeControlAction({ action: 'CLICK', target: handle }, controls, observation)).toEqual({ ok: false, code: 'OBSERVATION_STALE' });
+
+    const newDocument = createLocalControlRegistry({
+      documentGeneration: 'document-2',
+      nextObservationEpoch: () => 'observation-2',
+    });
+    newDocument.beginObservation();
+    expect(executeControlAction({ action: 'CLICK', target: handle }, newDocument, observation)).toEqual({ ok: false, code: 'DOCUMENT_CHANGED' });
   });
 });

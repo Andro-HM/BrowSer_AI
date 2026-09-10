@@ -6,7 +6,11 @@
 // network, no real personal data), but Chrome still sees genuine https:// documents
 // with real layout, so getBoundingClientRect/computed styles are real.
 
-import { COLLECT_VISUAL_CANDIDATES, type VisualCandidatesResponse } from '../../extension/src/types/messages';
+import {
+  COLLECT_VISUAL_CANDIDATES,
+  RESOLVE_ACTIVE_TAB,
+  type VisualCandidatesResponse,
+} from '../../extension/src/types/messages';
 import { expect, openTestPage, runVisualCheck, statusLine, test, TEST_ORIGIN } from './fixtures';
 
 /** Long enough to clear SPARSE_DOM_TEXT_CHARS, with a described canvas. */
@@ -96,10 +100,10 @@ test.describe('candidate collection against a real DOM', () => {
   test('returns real measured geometry for the active tab', async ({ extContext, panel }) => {
     await openTestPage(extContext, CANVAS_APP);
 
-    const response: VisualCandidatesResponse = await panel.evaluate(
-      (messageType) => chrome.runtime.sendMessage({ type: messageType }),
-      COLLECT_VISUAL_CANDIDATES,
-    );
+    const response: VisualCandidatesResponse = await panel.evaluate(async ({ collect, resolve }) => {
+      const target = await chrome.runtime.sendMessage({ type: resolve });
+      return chrome.runtime.sendMessage({ type: collect, targetTabId: target.tabId });
+    }, { collect: COLLECT_VISUAL_CANDIDATES, resolve: RESOLVE_ACTIVE_TAB });
 
     expect(response.restricted).toBeUndefined();
     const snapshot = response.snapshot;
@@ -118,10 +122,13 @@ test.describe('candidate collection against a real DOM', () => {
   test('carries no pixel data across the message boundary', async ({ extContext, panel }) => {
     await openTestPage(extContext, CANVAS_APP);
 
-    const serialized = await panel.evaluate(
-      async (messageType) => JSON.stringify(await chrome.runtime.sendMessage({ type: messageType })),
-      COLLECT_VISUAL_CANDIDATES,
-    );
+    const serialized = await panel.evaluate(async ({ collect, resolve }) => {
+      const target = await chrome.runtime.sendMessage({ type: resolve });
+      return JSON.stringify(await chrome.runtime.sendMessage({
+        type: collect,
+        targetTabId: target.tabId,
+      }));
+    }, { collect: COLLECT_VISUAL_CANDIDATES, resolve: RESOLVE_ACTIVE_TAB });
 
     expect(serialized).not.toMatch(/data:image/);
     expect(serialized).not.toMatch(/base64/);

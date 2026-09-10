@@ -17,24 +17,32 @@ export function registerVisualPerceptionMessages(): void {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== COLLECT_VISUAL_CANDIDATES) return undefined;
 
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs[0];
+    const targetTabId = message.targetTabId;
+    if (!Number.isInteger(targetTabId) || targetTabId < 0) {
+      sendResponse({ error: 'TARGET_TAB_REQUIRED' } satisfies VisualCandidatesResponse);
+      return undefined;
+    }
 
-      if (activeTab?.id === undefined) {
-        sendResponse({ error: 'NO_ACTIVE_TAB' } satisfies VisualCandidatesResponse);
+    void chrome.tabs.get(targetTabId).then((targetTab) => {
+      if (targetTab.id === undefined) {
+        sendResponse({ error: 'TARGET_TAB_DISAPPEARED' } satisfies VisualCandidatesResponse);
+        return;
+      }
+      if (targetTab.active !== true) {
+        sendResponse({ error: 'TARGET_TAB_CHANGED' } satisfies VisualCandidatesResponse);
         return;
       }
 
       // `tab.url` is only readable where we hold host permissions, so an empty URL
       // means "cannot establish that this page is operable" → treat as restricted.
       // Fail closed (CONTRIBUTING.md §5 Rule 7).
-      if (isRestrictedUrl(activeTab.url ?? '')) {
+      if (isRestrictedUrl(targetTab.url ?? '')) {
         sendResponse({ restricted: true } satisfies VisualCandidatesResponse);
         return;
       }
 
       chrome.scripting.executeScript(
-        { target: { tabId: activeTab.id }, func: collectVisualCandidatesInPage },
+        { target: { tabId: targetTab.id }, func: collectVisualCandidatesInPage },
         (results) => {
           if (chrome.runtime.lastError !== undefined) {
             // Chrome refuses injection on protected surfaces. The message text can
@@ -46,6 +54,8 @@ export function registerVisualPerceptionMessages(): void {
           sendResponse({ snapshot } satisfies VisualCandidatesResponse);
         },
       );
+    }).catch(() => {
+      sendResponse({ error: 'TARGET_TAB_DISAPPEARED' } satisfies VisualCandidatesResponse);
     });
 
     return true; // async sendResponse

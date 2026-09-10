@@ -5,12 +5,11 @@
 // thumbnails. Region geometry is shown because coordinates are not content.
 
 import { useState } from 'react';
-import { createVisualPerceptionService } from '../perception/visual';
-import type { VisualPerceptionService } from '../perception/visual';
 import type { VisualPerceptionResult, VisualPerceptionStatus } from '../types/contracts';
-import { COLLECT_VISUAL_CANDIDATES, type VisualCandidatesResponse } from '../types/messages';
-import { captureViaBackground } from './capture';
 import { recordVisualStats } from './visual-stats';
+import { createPinnedVisualService } from './visual-service';
+import { createPinnedTabSession, pinActiveTab } from './tab-session';
+import { tryAcquirePanelOperation, usePanelOperationBusy } from './operation-lock';
 
 const STATUS_LABELS: Record<VisualPerceptionStatus, string> = {
   not_required: 'Not required — DOM was sufficient',
@@ -38,13 +37,6 @@ const CONTENT_STATUS_LABELS: Record<string, string> = {
   failed: 'OCR/vision engine errored (fail closed — nothing fabricated)',
 };
 
-// Created on first use so simply opening the panel loads no provider.
-let service: VisualPerceptionService | null = null;
-function getService(): VisualPerceptionService {
-  service ??= createVisualPerceptionService({ captureViewport: captureViaBackground });
-  return service;
-}
-
 const RESTRICTED_RESULT: VisualPerceptionResult = {
   status: 'restricted_page',
   supported: false,
@@ -63,31 +55,51 @@ export function VisualStatus() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<VisualPerceptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const operationBusy = usePanelOperationBusy();
 
   const runVisualCheck = async () => {
+    const release = tryAcquirePanelOperation('visual');
+    if (release === null) return;
     setError(null);
     setRunning(true);
     try {
-      const response: VisualCandidatesResponse = await chrome.runtime.sendMessage({
-        type: COLLECT_VISUAL_CANDIDATES,
-      });
+      const target = await pinActiveTab();
+      if (target.restricted === true) {
+        setResult(RESTRICTED_RESULT);
+        return;
+      }
+      if (target.tabId === undefined) {
+        setError('Could not resolve the target tab.');
+        return;
+      }
+      const tabSession = createPinnedTabSession(target.tabId);
+      const response = await tabSession.scan();
 
       if (response?.restricted === true) {
         setResult(RESTRICTED_RESULT);
         return;
       }
-      if (response?.error !== undefined || !response?.snapshot) {
+      if (
+        response?.error !== undefined ||
+        !response?.snapshot ||
+        typeof response.observationEpoch !== 'string' ||
+        typeof response.documentGeneration !== 'string'
+      ) {
         setError('Could not read page structure.');
         return;
       }
 
-      const result = await getService().run(response.snapshot);
+      const result = await createPinnedVisualService(tabSession).run(response.snapshot, {
+        observationEpoch: response.observationEpoch,
+        documentGeneration: response.documentGeneration,
+      });
       recordVisualStats(result);
       setResult(result);
     } catch {
       setError('Visual perception could not run.');
     } finally {
       setRunning(false);
+      release();
     }
   };
 
@@ -101,7 +113,7 @@ export function VisualStatus() {
       <button
         className="mt-3 px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50"
         onClick={runVisualCheck}
-        disabled={running}
+        disabled={operationBusy}
       >
         {running ? 'Checking…' : 'Run Visual Check'}
       </button>

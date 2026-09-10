@@ -2,31 +2,69 @@
 // id, name, or element reference; this registry is owned by the content script.
 
 import { isControlHandle, type AgentAction } from '../types/contracts';
-import type { ExecuteActionResponse } from '../types/messages';
+import type { ExecuteActionResponse, ObservationContext } from '../types/messages';
 
 type TargetedAction = Extract<AgentAction, { target: string }>;
 
 export interface LocalControlRegistry {
-  beginObservation(): void;
+  beginObservation(): ObservationContext;
+  invalidate(): void;
   register(element: Element): string;
-  resolve(handle: string): Element | undefined;
+  validate(expected: ObservationContext): ExecuteActionResponse;
+  resolve(handle: string, expected: ObservationContext): Element | undefined;
 }
 
-export function createLocalControlRegistry(): LocalControlRegistry {
+export interface LocalControlRegistryOptions {
+  documentGeneration?: string;
+  nextObservationEpoch?: () => string;
+}
+
+function opaqueId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID()}`;
+}
+
+export function createLocalControlRegistry(
+  options: LocalControlRegistryOptions = {},
+): LocalControlRegistry {
+  const documentGeneration = options.documentGeneration ?? opaqueId('DOCUMENT');
+  const nextObservationEpoch = options.nextObservationEpoch ?? (() => opaqueId('OBSERVATION'));
   let next = 1;
-  let controls = new Map<string, Element>();
+  let observationEpoch: string | undefined;
+  let controls = new Map<string, { element: Element; observationEpoch: string }>();
+
+  const validate = (expected: ObservationContext): ExecuteActionResponse => {
+    if (expected.documentGeneration !== documentGeneration) {
+      return { ok: false, code: 'DOCUMENT_CHANGED' };
+    }
+    if (observationEpoch === undefined || expected.observationEpoch !== observationEpoch) {
+      return { ok: false, code: 'OBSERVATION_STALE' };
+    }
+    return { ok: true, code: 'OK' };
+  };
+
   return {
-    beginObservation(): void {
+    beginObservation(): ObservationContext {
       next = 1;
       controls = new Map();
+      observationEpoch = nextObservationEpoch();
+      return { observationEpoch, documentGeneration };
+    },
+    invalidate(): void {
+      next = 1;
+      controls = new Map();
+      observationEpoch = undefined;
     },
     register(element: Element): string {
+      if (observationEpoch === undefined) throw new Error('OBSERVATION_REQUIRED');
       const handle = `CONTROL_${next++}`;
-      controls.set(handle, element);
+      controls.set(handle, { element, observationEpoch });
       return handle;
     },
-    resolve(handle: string): Element | undefined {
-      return isControlHandle(handle) ? controls.get(handle) : undefined;
+    validate,
+    resolve(handle: string, expected: ObservationContext): Element | undefined {
+      if (!validate(expected).ok || !isControlHandle(handle)) return undefined;
+      const entry = controls.get(handle);
+      return entry?.observationEpoch === expected.observationEpoch ? entry.element : undefined;
     },
   };
 }
@@ -43,8 +81,11 @@ function isInteractable(element: Element): boolean {
 export function executeControlAction(
   action: TargetedAction,
   controls: LocalControlRegistry,
+  expected: ObservationContext,
 ): ExecuteActionResponse {
-  const element = controls.resolve(action.target);
+  const validity = controls.validate(expected);
+  if (!validity.ok) return validity;
+  const element = controls.resolve(action.target, expected);
   if (element === undefined) return { ok: false, code: 'CONTROL_UNKNOWN' };
   if (!isInteractable(element)) return { ok: false, code: 'NOT_VISIBLE' };
   if (action.action === 'CLICK') {

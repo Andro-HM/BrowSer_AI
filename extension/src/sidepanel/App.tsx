@@ -1,7 +1,7 @@
 // PrivAgent side panel.
 //
 // The panel NEVER renders raw page content. On scan it collects only structured inputs
-// from the active tab (see SCAN_PAGE), runs the local pipeline entirely on-device —
+// from one pinned tab (see SCAN_PAGE), runs the local pipeline entirely on-device —
 //   M2 detectPII → M3 visual perception → M4+M5 enforcePrivacy (aliasing + masking) —
 // and displays the derived, sanitized `ScanSummary`: counts, semantic aliases, and
 // masked-region metadata only. Raw values reach only the LOCAL vault, never the UI.
@@ -15,18 +15,19 @@ import { classifyPage } from '../perception/visual/pageClassifier';
 import { toSensitiveCategory } from '../sanitizer/alias';
 import { createLocalVault } from '../vault';
 import type { PolicySignals, RiskSeverity } from '../types/contracts';
-import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
 import { buildScanSummary, type ScanFindingView, type ScanSummary } from '../scan';
 import { ocrTrace } from '../diag/ocr-trace';
 import { recordEvent, sessionTelemetry } from './telemetry-session';
 import { TelemetryPanel } from './TelemetryPanel';
 import { recordVisualStats } from './visual-stats';
-import { getVisualService } from './visual-service';
+import { createPinnedVisualService } from './visual-service';
+import { createPinnedTabSession, pinActiveTab } from './tab-session';
+import { tryAcquirePanelOperation, usePanelOperationBusy } from './operation-lock';
 
 type ScanState = 'idle' | 'scanning' | 'done' | 'restricted' | 'error';
 
 /**
- * Scroll the active tab to document y `top` for bounded below-the-fold band capture, then
+ * Scroll the pinned tab to document y `top` for bounded below-the-fold band capture, then
  * let layout/lazy content settle before the caller captures. Relayed through the
  * background worker; carries only an offset. Injected into the M3 service so that ABSENT
  * this dependency the service inspects only the visible viewport (honest limit).
@@ -50,14 +51,27 @@ export function App() {
   const [state, setState] = useState<ScanState>('idle');
   const [summary, setSummary] = useState<ScanSummary | null>(null);
   const [showRegions, setShowRegions] = useState(false);
+  const operationBusy = usePanelOperationBusy();
 
   const runScan = async () => {
+    const release = tryAcquirePanelOperation('scan');
+    if (release === null) return;
     setState('scanning');
     setSummary(null);
     setShowRegions(false);
 
     try {
-      const response: ScanPageResponse = await chrome.runtime.sendMessage({ type: SCAN_PAGE });
+      const target = await pinActiveTab();
+      if (target.restricted === true) {
+        setState('restricted');
+        return;
+      }
+      if (target.tabId === undefined) {
+        setState('error');
+        return;
+      }
+      const tabSession = createPinnedTabSession(target.tabId);
+      const response = await tabSession.scan();
 
       if (response?.restricted === true) {
         setState('restricted');
@@ -66,7 +80,9 @@ export function App() {
       if (
         response?.error !== undefined ||
         typeof response?.pageText !== 'string' ||
-        !response?.snapshot
+        !response?.snapshot ||
+        typeof response.observationEpoch !== 'string' ||
+        typeof response.documentGeneration !== 'string'
       ) {
         setState('error');
         return;
@@ -75,7 +91,7 @@ export function App() {
       const pageText = response.pageText;
       const snapshot = response.snapshot;
 
-      // The active page was reachable and NOT excluded by selective-page policy: it is
+      // The pinned page was reachable and NOT excluded by selective-page policy: it is
       // the scan target. Log non-content facts only (text length, candidate count).
       ocrTrace('SELECTED_PAGE', {
         candidates: Array.isArray(snapshot.candidates) ? snapshot.candidates.length : 0,
@@ -95,7 +111,10 @@ export function App() {
       }
 
       const visualStartedAt = performance.now();
-      const visual = await getVisualService().run(snapshot);
+      const visual = await createPinnedVisualService(tabSession).run(snapshot, {
+        observationEpoch: response.observationEpoch,
+        documentGeneration: response.documentGeneration,
+      });
       sessionTelemetry.timing('scan.visual', performance.now() - visualStartedAt);
       recordVisualStats(visual);
 
@@ -137,6 +156,8 @@ export function App() {
       setState('done');
     } catch {
       setState('error');
+    } finally {
+      release();
     }
   };
 
@@ -148,7 +169,7 @@ export function App() {
       <button
         className="mt-4 px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50"
         onClick={runScan}
-        disabled={state === 'scanning'}
+        disabled={operationBusy}
       >
         {state === 'scanning' ? 'Scanning…' : summary !== null ? 'Scan again' : 'Scan Page'}
       </button>

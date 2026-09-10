@@ -20,10 +20,11 @@ import {
 } from '../agent/provider-options';
 import { DEFAULT_ACTION_POLICY } from '../actions/validate';
 import { createLocalVault } from '../vault';
-import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
 import { recordEvent, sessionTelemetry } from './telemetry-session';
-import { getVisualService } from './visual-service';
+import { createPinnedVisualService } from './visual-service';
 import { recordVisualStats } from './visual-stats';
+import { createPinnedTabSession, pinActiveTab } from './tab-session';
+import { tryAcquirePanelOperation, usePanelOperationBusy } from './operation-lock';
 
 type RunState = 'idle' | 'running' | 'done';
 
@@ -45,12 +46,30 @@ export function AgentTask() {
   const [plannerMode, setPlannerMode] = useState<PlannerMode>('local');
   const [state, setState] = useState<RunState>('idle');
   const [result, setResult] = useState<AgentRunResult | null>(null);
+  const operationBusy = usePanelOperationBusy();
 
   const run = async () => {
     if (task.trim().length === 0) return;
+    const release = tryAcquirePanelOperation('agent');
+    if (release === null) return;
     setState('running');
     setResult(null);
     try {
+      const target = await pinActiveTab();
+      if (target.restricted === true || target.tabId === undefined) {
+        setResult({
+          status: target.restricted === true ? 'restricted' : 'error',
+          reason: target.error,
+          steps: [],
+          actionsExecuted: 0,
+          stageMs: { scanMs: 0, visualMs: 0, enforceMs: 0, planMs: 0, executeMs: 0, totalMs: 0 },
+        });
+        setState('done');
+        return;
+      }
+      const tabSession = createPinnedTabSession(target.tabId);
+      const visualService = createPinnedVisualService(tabSession);
+
       // NAVIGATE allowlist: user-configured via storage (settings surface later);
       // default EMPTY — the loop then falls back to same-origin-only navigation.
       const stored = (await chrome.storage.sync.get('navigationAllowlist')) as {
@@ -97,12 +116,13 @@ export function AgentTask() {
         bridge: createActionBridge({
           vault,
           policy: () => ({ ...DEFAULT_ACTION_POLICY, navigationAllowlist: [...navigationPolicy.get()] }),
+          sendToPage: tabSession.execute,
           onAliasResolved: (alias) => recordEvent({ type: 'ALIAS_RESOLVED', alias }),
         }),
         firewall,
-        scan: () => chrome.runtime.sendMessage({ type: SCAN_PAGE }) as Promise<ScanPageResponse>,
-        observeVisual: async (snapshot) => {
-          const visual = await getVisualService().run(snapshot);
+        scan: tabSession.scan,
+        observeVisual: async (snapshot, observation) => {
+          const visual = await visualService.run(snapshot, observation);
           recordVisualStats(visual);
           return visual;
         },
@@ -130,6 +150,8 @@ export function AgentTask() {
         actionsExecuted: 0,
         stageMs: { scanMs: 0, visualMs: 0, enforceMs: 0, planMs: 0, executeMs: 0, totalMs: 0 },
       });
+    } finally {
+      release();
     }
   };
 
@@ -145,7 +167,7 @@ export function AgentTask() {
         placeholder="e.g. fill the form with my details and submit"
         value={task}
         onChange={(event) => setTask(event.target.value)}
-        disabled={state === 'running'}
+        disabled={operationBusy}
       />
 
       <fieldset className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-600">
@@ -157,7 +179,7 @@ export function AgentTask() {
             name="planner-mode"
             checked={plannerMode === 'local'}
             onChange={() => setPlannerMode('local')}
-            disabled={state === 'running'}
+            disabled={operationBusy}
           />
           Local AI (Ollama)
         </label>
@@ -168,7 +190,7 @@ export function AgentTask() {
             name="planner-mode"
             checked={plannerMode === 'gemini'}
             onChange={() => setPlannerMode('gemini')}
-            disabled={state === 'running'}
+            disabled={operationBusy}
           />
           Gemini
         </label>
@@ -179,7 +201,7 @@ export function AgentTask() {
             name="planner-mode"
             checked={plannerMode === 'zen'}
             onChange={() => setPlannerMode('zen')}
-            disabled={state === 'running'}
+            disabled={operationBusy}
           />
           Zen (GPT-5.6 Luna)
         </label>
@@ -190,7 +212,7 @@ export function AgentTask() {
             name="planner-mode"
             checked={plannerMode === 'offline'}
             onChange={() => setPlannerMode('offline')}
-            disabled={state === 'running'}
+            disabled={operationBusy}
           />
           Offline
         </label>
@@ -199,7 +221,7 @@ export function AgentTask() {
       <button
         className="mt-2 px-4 py-1.5 bg-emerald-600 text-white rounded text-sm disabled:opacity-50"
         onClick={run}
-        disabled={state === 'running' || task.trim().length === 0}
+        disabled={operationBusy || task.trim().length === 0}
       >
         {state === 'running' ? 'Running…' : 'Run agent task'}
       </button>

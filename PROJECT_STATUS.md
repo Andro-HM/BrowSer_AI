@@ -1474,3 +1474,46 @@ it.
 ## 11. Next milestone
 
 All planned milestones complete. Remaining: LICENSE, demo video, SIH submission report.
+
+---
+
+## 12. Product-readiness Milestone 1 — run isolation + observation epochs
+
+_Added 2026-09-10._
+
+### Scope
+
+- Each panel operation resolves its target tab once. Agent scan, visual capture, bounded
+  scroll, action execution, and re-observation carry that pinned `tabId`; switching away
+  fails closed with `TARGET_TAB_CHANGED` and never redirects work to the new active tab.
+- Every successful content-script scan creates an opaque observation epoch. Registry
+  entries bind `CONTROL_n` to that epoch and to a per-document generation. The local
+  action bridge carries both values beside the structured action; neither is included in
+  the remote planner request.
+- CLICK/TYPE/SELECT (and, conservatively, SCROLL/NAVIGATE) validate document generation
+  and epoch before execution. Navigation invalidates the current registry immediately;
+  `pagehide` invalidates it again, and a new document creates a new generation.
+- One small side-panel operation lock excludes Agent Task, manual Scan, and manual Visual
+  Check from overlapping and resetting the content registry. React reads that external
+  lock with `useSyncExternalStore` so all three controls show the real shared busy state.
+- Visual-only coordinate action execution is intentionally unchanged and remains outside
+  this milestone.
+
+### Verification — actually executed
+
+- Typecheck: pass.
+- Lint: pass.
+- Vitest: **380 passed / 380** across **43 files**.
+- PrivAgent-Bench: **3 passed / 3**.
+- Production build: pass (**102 modules transformed**).
+- Playwright: the default six-worker local run hit Chromium resource/session flakes
+  (**22/24**); both affected specs passed alone (**2/2**), then the complete suite passed
+  with the repository's documented constrained-worker profile: **24 passed / 24**.
+- Backend tests were not run because no backend/provider code or contract changed.
+
+### Known limitations
+
+- The epoch protects scan-to-execution identity and rejects disconnected controls, but it
+  is not a general-purpose detector for every harmless in-document DOM mutation.
+- Visual-only controls still have no opaque visual-handle registry or coordinate executor;
+  that is explicitly deferred to the later visual-action milestone.

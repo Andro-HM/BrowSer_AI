@@ -13,7 +13,7 @@
 
 import type { AgentAction } from '../types/contracts';
 import type { LocalVault } from '../vault';
-import type { ExecuteActionResponse } from '../types/messages';
+import type { ExecuteActionResponse, ObservationContext } from '../types/messages';
 import {
   DEFAULT_ACTION_POLICY,
   validateActionPolicy,
@@ -32,7 +32,7 @@ export interface ActionBridge {
    * plus a code (OK, NOT_FOUND, …, or the failing validation stage's reason code).
    * Never throws for a rejected action; throws only if the messaging channel itself fails.
    */
-  execute(action: AgentAction): Promise<ExecuteActionResponse>;
+  execute(action: AgentAction, observation: ObservationContext): Promise<ExecuteActionResponse>;
 }
 
 export interface ActionBridgeOptions {
@@ -41,27 +41,25 @@ export interface ActionBridgeOptions {
   /** Local alias↔value store. TYPE/SELECT values that are aliases resolve here. */
   vault: LocalVault;
   /** Transport to the page executor. Injectable for tests. */
-  sendToPage?: (action: AgentAction) => Promise<ExecuteActionResponse>;
+  sendToPage: (
+    action: AgentAction,
+    observation: ObservationContext,
+  ) => Promise<ExecuteActionResponse>;
   /** Fired after a successful LOCAL alias resolution — metadata only, never the value. */
   onAliasResolved?: (alias: string) => void;
-}
-
-async function executeViaContentScript(action: AgentAction): Promise<ExecuteActionResponse> {
-  const response: ExecuteActionResponse | undefined = await chrome.runtime.sendMessage({
-    type: 'EXECUTE_ACTION',
-    action,
-  });
-  return response ?? { ok: false, code: 'EXEC_FAILED' };
 }
 
 export function createActionBridge(options: ActionBridgeOptions): ActionBridge {
   const resolvePolicy = (): ActionPolicy =>
     typeof options.policy === 'function' ? options.policy() : (options.policy ?? DEFAULT_ACTION_POLICY);
-  const sendToPage = options.sendToPage ?? executeViaContentScript;
+  const { sendToPage } = options;
   const { vault } = options;
 
   return {
-    async execute(action: AgentAction): Promise<ExecuteActionResponse> {
+    async execute(
+      action: AgentAction,
+      observation: ObservationContext,
+    ): Promise<ExecuteActionResponse> {
       const schema = validateActionSchema(action);
       if (!schema.valid) return { ok: false, code: schema.reason };
 
@@ -84,7 +82,7 @@ export function createActionBridge(options: ActionBridgeOptions): ActionBridge {
             : { action: 'SELECT', target: action.target, value: resolved };
       }
 
-      return sendToPage(effective);
+      return sendToPage(effective, observation);
     },
   };
 }

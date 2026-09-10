@@ -8,7 +8,14 @@
 // so its top-level `onMessage.addListener` registrations are captured and driven directly.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CAPTURE_VIEWPORT, SCAN_PAGE, SCROLL_VIEWPORT } from '../../extension/src/types/messages';
+import {
+  CAPTURE_VIEWPORT,
+  EXECUTE_ACTION,
+  RESOLVE_ACTIVE_TAB,
+  SCAN_PAGE,
+  SCROLL_VIEWPORT,
+  VALIDATE_OBSERVATION,
+} from '../../extension/src/types/messages';
 
 type Listener = (
   message: unknown,
@@ -18,10 +25,11 @@ type Listener = (
 
 interface FakeState {
   listeners: Listener[];
-  activeTab: { id?: number; url?: string; windowId?: number } | undefined;
+  activeTab: { id?: number; url?: string; windowId?: number; active?: boolean } | undefined;
+  pinnedTab: { id?: number; url?: string; windowId?: number; active?: boolean } | undefined;
   /** Queue of responses `tabs.sendMessage` returns, in order (undefined ⇒ no receiver). */
   sendMessageQueue: unknown[];
-  sendMessageCalls: unknown[];
+  sendMessageCalls: { tabId: number; message: unknown }[];
   executeScriptImpl: () => Promise<unknown>;
   executeScriptCalls: number;
   lastError: { message: string } | undefined;
@@ -36,7 +44,8 @@ let state: FakeState;
 function installFakeChrome(): void {
   state = {
     listeners: [],
-    activeTab: { id: 7, url: 'https://example.test/page', windowId: 3 },
+    activeTab: { id: 7, url: 'https://example.test/page', windowId: 3, active: true },
+    pinnedTab: { id: 7, url: 'https://example.test/page', windowId: 3, active: true },
     sendMessageQueue: [],
     sendMessageCalls: [],
     executeScriptImpl: () => Promise.resolve([{ result: undefined }]),
@@ -66,12 +75,26 @@ function installFakeChrome(): void {
         }
         return Promise.resolve(tabs);
       },
+      get: (tabId: number) => {
+        if (state.pinnedTab?.id === tabId) {
+          return Promise.resolve({
+            ...state.pinnedTab,
+            active: state.activeTab?.id === tabId,
+          });
+        }
+        if (state.activeTab?.id === tabId) return Promise.resolve(state.activeTab);
+        return Promise.reject(new Error('missing tab'));
+      },
       sendMessage: (
         _tabId: number,
         message: unknown,
         cb?: (response?: unknown) => void,
       ) => {
-        state.sendMessageCalls.push(message);
+        state.sendMessageCalls.push({ tabId: _tabId, message });
+        if ((message as { type?: string }).type === VALIDATE_OBSERVATION) {
+          cb?.({ ok: true, code: 'OK' });
+          return undefined;
+        }
         const next = state.sendMessageQueue.shift();
         state.lastError = next === undefined ? { message: 'no receiver' } : undefined;
         cb?.(next);
@@ -105,7 +128,7 @@ async function loadWorker(): Promise<void> {
 }
 
 /** Drive the registered SCAN_PAGE/SCROLL_VIEWPORT listeners and await the response. */
-function dispatch(message: { type: string; top?: number }): Promise<unknown> {
+function dispatch(message: Record<string, unknown> & { type: string }): Promise<unknown> {
   return new Promise((resolve) => {
     let settled = false;
     for (const listener of state.listeners) {
@@ -135,7 +158,7 @@ describe('SCAN_PAGE relay', () => {
     const payload = { pageText: 'safe', snapshot: { url: 'https://example.test/page' } };
     state.sendMessageQueue = [payload];
 
-    const response = await dispatch({ type: SCAN_PAGE });
+    const response = await dispatch({ type: SCAN_PAGE, targetTabId: 7 });
 
     expect(response).toEqual(payload);
     expect(state.executeScriptCalls).toBe(0); // no injection needed
@@ -147,7 +170,7 @@ describe('SCAN_PAGE relay', () => {
     // First attempt: no receiver (undefined). After injection, the retry succeeds.
     state.sendMessageQueue = [undefined, payload];
 
-    const response = await dispatch({ type: SCAN_PAGE });
+    const response = await dispatch({ type: SCAN_PAGE, targetTabId: 7 });
 
     expect(state.executeScriptCalls).toBe(1);
     expect(response).toEqual(payload);
@@ -158,29 +181,31 @@ describe('SCAN_PAGE relay', () => {
     state.sendMessageQueue = [undefined]; // never a receiver
     state.executeScriptImpl = () => Promise.reject(new Error('cannot access')); // browser refuses
 
-    const response = await dispatch({ type: SCAN_PAGE });
+    const response = await dispatch({ type: SCAN_PAGE, targetTabId: 7 });
 
     expect(response).toEqual({ error: 'PAGE_UNREACHABLE' });
   });
 
   it('reports a restricted surface without attempting injection', async () => {
     await loadWorker();
-    state.activeTab = { id: 7, url: 'chrome://settings' };
+    state.activeTab = { id: 7, url: 'chrome://settings', windowId: 3, active: true };
+    state.pinnedTab = state.activeTab;
 
-    const response = await dispatch({ type: SCAN_PAGE });
+    const response = await dispatch({ type: SCAN_PAGE, targetTabId: 7 });
 
     expect(response).toEqual({ restricted: true });
     expect(state.executeScriptCalls).toBe(0);
     expect(state.sendMessageCalls).toHaveLength(0);
   });
 
-  it('reports NO_ACTIVE_TAB when there is no active tab', async () => {
+  it('reports TARGET_TAB_DISAPPEARED when the pinned tab no longer exists', async () => {
     await loadWorker();
     state.activeTab = undefined;
+    state.pinnedTab = undefined;
 
-    const response = await dispatch({ type: SCAN_PAGE });
+    const response = await dispatch({ type: SCAN_PAGE, targetTabId: 7 });
 
-    expect(response).toEqual({ error: 'NO_ACTIVE_TAB' });
+    expect(response).toEqual({ error: 'TARGET_TAB_DISAPPEARED' });
   });
 
   it('never forwards a raw sendMessage payload for an unknown message type', async () => {
@@ -195,7 +220,13 @@ describe('SCROLL_VIEWPORT relay', () => {
     await loadWorker();
     state.sendMessageQueue = [{ scrollY: 800 }];
 
-    const response = await dispatch({ type: SCROLL_VIEWPORT, top: 800 });
+    const response = await dispatch({
+      type: SCROLL_VIEWPORT,
+      targetTabId: 7,
+      top: 800,
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
 
     expect(response).toEqual({ scrollY: 800 });
   });
@@ -204,7 +235,13 @@ describe('SCROLL_VIEWPORT relay', () => {
     await loadWorker();
     state.sendMessageQueue = [undefined, { scrollY: 1600 }];
 
-    const response = await dispatch({ type: SCROLL_VIEWPORT, top: 1600 });
+    const response = await dispatch({
+      type: SCROLL_VIEWPORT,
+      targetTabId: 7,
+      top: 1600,
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
 
     expect(state.executeScriptCalls).toBe(1);
     expect(response).toEqual({ scrollY: 1600 });
@@ -212,13 +249,18 @@ describe('SCROLL_VIEWPORT relay', () => {
 });
 
 describe('CAPTURE_VIEWPORT broker', () => {
-  // The reason capture is brokered in the background at all: it captures using the active
+  // The reason capture is brokered in the background at all: it captures using the pinned
   // tab's OWN windowId (resolved here), not WINDOW_ID_CURRENT from the panel document.
-  it('captures the active tab using its resolved windowId and returns only a data URL', async () => {
+  it('captures the pinned tab using its resolved windowId and returns only a data URL', async () => {
     await loadWorker();
     state.captureDataUrl = 'data:image/png;base64,PIXELS';
 
-    const response = await dispatch({ type: CAPTURE_VIEWPORT });
+    const response = await dispatch({
+      type: CAPTURE_VIEWPORT,
+      targetTabId: 7,
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
 
     expect(state.captureCalls).toHaveLength(1);
     expect(state.captureCalls[0]?.windowId).toBe(3); // the tab's own window, never -2
@@ -227,21 +269,33 @@ describe('CAPTURE_VIEWPORT broker', () => {
 
   it('reports a restricted surface without attempting capture (fail closed)', async () => {
     await loadWorker();
-    state.activeTab = { id: 7, url: 'chrome://settings', windowId: 3 };
+    state.activeTab = { id: 7, url: 'chrome://settings', windowId: 3, active: true };
+    state.pinnedTab = state.activeTab;
 
-    const response = await dispatch({ type: CAPTURE_VIEWPORT });
+    const response = await dispatch({
+      type: CAPTURE_VIEWPORT,
+      targetTabId: 7,
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
 
     expect(response).toEqual({ restricted: true });
     expect(state.captureCalls).toHaveLength(0);
   });
 
-  it('reports NO_ACTIVE_TAB when there is no active tab', async () => {
+  it('reports TARGET_TAB_DISAPPEARED when the pinned tab no longer exists', async () => {
     await loadWorker();
     state.activeTab = undefined;
+    state.pinnedTab = undefined;
 
-    const response = await dispatch({ type: CAPTURE_VIEWPORT });
+    const response = await dispatch({
+      type: CAPTURE_VIEWPORT,
+      targetTabId: 7,
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
 
-    expect(response).toEqual({ error: 'NO_ACTIVE_TAB' });
+    expect(response).toEqual({ error: 'TARGET_TAB_DISAPPEARED' });
     expect(state.captureCalls).toHaveLength(0);
   });
 
@@ -249,9 +303,14 @@ describe('CAPTURE_VIEWPORT broker', () => {
     await loadWorker();
     state.captureError = { message: 'Cannot capture this tab' };
 
-    const response = await dispatch({ type: CAPTURE_VIEWPORT });
+    const response = await dispatch({
+      type: CAPTURE_VIEWPORT,
+      targetTabId: 7,
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
 
-    expect(response).toEqual({ error: 'Cannot capture this tab' });
+    expect(response).toEqual({ error: 'CAPTURE_FAILED' });
   });
 
   it('reports EMPTY_CAPTURE when the API returns no data URL', async () => {
@@ -259,8 +318,61 @@ describe('CAPTURE_VIEWPORT broker', () => {
     state.captureDataUrl = undefined;
     state.captureError = undefined;
 
-    const response = await dispatch({ type: CAPTURE_VIEWPORT });
+    const response = await dispatch({
+      type: CAPTURE_VIEWPORT,
+      targetTabId: 7,
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
 
     expect(response).toEqual({ error: 'EMPTY_CAPTURE' });
+  });
+});
+
+describe('pinned tab isolation', () => {
+  it('resolves once and never redirects a delayed action to a newly active tab', async () => {
+    await loadWorker();
+    expect(await dispatch({ type: RESOLVE_ACTIVE_TAB })).toEqual({ tabId: 7 });
+
+    let releasePlanner!: () => void;
+    const remotePlannerDelay = new Promise<void>((resolve) => {
+      releasePlanner = resolve;
+    });
+    const execution = remotePlannerDelay.then(() => dispatch({
+      type: EXECUTE_ACTION,
+      targetTabId: 7,
+      action: { action: 'CLICK', target: 'CONTROL_1' },
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    }));
+
+    state.activeTab = {
+      id: 8,
+      url: 'https://other.test/page',
+      windowId: 3,
+      active: true,
+    };
+    releasePlanner();
+    const response = await execution;
+
+    expect(response).toEqual({ ok: false, code: 'TARGET_TAB_CHANGED' });
+    expect(state.sendMessageCalls).toHaveLength(0);
+  });
+
+  it('rejects execution when the pinned tab disappears', async () => {
+    await loadWorker();
+    state.activeTab = undefined;
+    state.pinnedTab = undefined;
+
+    const response = await dispatch({
+      type: EXECUTE_ACTION,
+      targetTabId: 7,
+      action: { action: 'TYPE', target: 'CONTROL_1', value: 'safe' },
+      observationEpoch: 'observation-1',
+      documentGeneration: 'document-1',
+    });
+
+    expect(response).toEqual({ ok: false, code: 'TARGET_TAB_DISAPPEARED' });
+    expect(state.sendMessageCalls).toHaveLength(0);
   });
 });

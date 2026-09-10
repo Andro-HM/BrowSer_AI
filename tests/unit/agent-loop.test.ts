@@ -9,16 +9,38 @@ import type {
   RemoteAgentRequest,
   VisualPerceptionResult,
 } from '../../extension/src/types/contracts';
-import type { FieldStructure, ScanPageResponse } from '../../extension/src/types/messages';
+import type {
+  FieldStructure,
+  ObservationContext,
+  ScanPageResponse,
+} from '../../extension/src/types/messages';
 
 const CANARY_EMAIL = 'CANARY_EMAIL_001@example.test';
 const CANARY_PHONE = '555-123-4567';
 
+let observationSequence = 0;
+function nextObservation() {
+  return {
+    observationEpoch: `observation-${++observationSequence}`,
+    documentGeneration: 'document-test',
+  };
+}
+
 /** Mutable fake page state; `scan` renders it the way the content script would. */
 function fakePage() {
-  const state = { email: '', phone: '', submitDisabled: false };
-  const scan = async (): Promise<ScanPageResponse> => ({
-    pageText: [
+  const state = {
+    email: '',
+    phone: '',
+    submitDisabled: false,
+    scanEpochs: [] as string[],
+    executionEpochs: [] as string[],
+  };
+  const scan = async (): Promise<ScanPageResponse> => {
+    const observation = nextObservation();
+    state.scanEpochs.push(observation.observationEpoch);
+    return {
+      ...observation,
+      pageText: [
       'Demo form — enter your contact details',
       `Example format: ${CANARY_EMAIL}`,
       `Example format: ${CANARY_PHONE}`,
@@ -28,15 +50,17 @@ function fakePage() {
       .filter((part) => part.length > 0)
       .join('\n'),
     snapshot: null,
-    structure: [
-      { tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
-      { tag: 'input', controlId: 'CONTROL_2', inputType: 'tel', name: 'phone', label: 'Phone', value: state.phone || undefined, disabled: false },
-      { tag: 'button', controlId: 'CONTROL_3', label: 'Submit', disabled: state.submitDisabled },
-    ] satisfies FieldStructure[],
-  });
+      structure: [
+        { tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', value: state.email || undefined, disabled: false },
+        { tag: 'input', controlId: 'CONTROL_2', inputType: 'tel', name: 'phone', label: 'Phone', value: state.phone || undefined, disabled: false },
+        { tag: 'button', controlId: 'CONTROL_3', label: 'Submit', disabled: state.submitDisabled },
+      ] satisfies FieldStructure[],
+    };
+  };
 
   /** The "page": a resolved TYPE writes the real value; CLICK disables the button. */
-  const executor = async (action: AgentAction) => {
+  const executor = async (action: AgentAction, observation: ObservationContext) => {
+    state.executionEpochs.push(observation.observationEpoch);
     if (action.action === 'TYPE' && action.target === 'CONTROL_1') state.email = action.value;
     else if (action.action === 'TYPE' && action.target === 'CONTROL_2') state.phone = action.value;
     else if (action.action === 'CLICK' && action.target === 'CONTROL_3') state.submitDisabled = true;
@@ -81,11 +105,15 @@ describe('agent loop (deterministic, in-extension)', () => {
     // Alias resolution happened LOCALLY: the executor received the real values…
     expect(page.state.email).toBe(CANARY_EMAIL);
     expect(page.state.phone).toBe(CANARY_PHONE);
+    expect(page.state.executionEpochs).toEqual(page.state.scanEpochs.slice(0, 3));
     // …while every outbound request carried aliases only — never a raw value.
     for (const request of seenRequests) {
       const json = JSON.stringify(request);
       expect(json).not.toContain(CANARY_EMAIL);
       expect(json).not.toContain(CANARY_PHONE);
+      expect(json).not.toContain('observationEpoch');
+      expect(json).not.toContain('documentGeneration');
+      expect(json).not.toContain('targetTabId');
     }
     // The vault held the alias→value mapping DURING the run (executor got reals)…
     // …but the mapping is wiped after the run — values must not persist tasks.
@@ -135,6 +163,7 @@ describe('agent loop (deterministic, in-extension)', () => {
   it('reports planner failure and rejected actions without retries', async () => {
     const failing = fakePage();
     failing.scan = async () => ({
+      ...nextObservation(),
       pageText: `Reach me at ${CANARY_EMAIL}`,
       snapshot: null,
       structure: [{ tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', disabled: false }],
@@ -155,6 +184,7 @@ describe('agent loop (deterministic, in-extension)', () => {
 
     const rejecting = fakePage();
     rejecting.scan = async () => ({
+      ...nextObservation(),
       pageText: `Reach me at ${CANARY_EMAIL}`,
       snapshot: null,
       structure: [{ tag: 'input', controlId: 'CONTROL_1', inputType: 'email', label: 'Email', disabled: false }],
@@ -218,6 +248,7 @@ describe('agent loop (deterministic, in-extension)', () => {
       scan: async () => {
         const emailTop = 1600 - page.scrollY;
         return {
+          ...nextObservation(),
           pageText: `Contact: BENCH_EMAIL_001@example.test\n${state.email}`,
           snapshot: { url: 'https://site.test/form', viewport: { width: 1280, height: 800 }, domTextLength: 0, candidates: [] },
           structure: [
@@ -282,6 +313,7 @@ describe('agent loop (deterministic, in-extension)', () => {
     const scan = async (): Promise<ScanPageResponse> => {
       const onTarget = url.startsWith('https://privagent.test');
       return {
+        ...nextObservation(),
         pageText: [
           onTarget ? `Checkout — Contact BENCH_EMAIL_001@example.test` : 'Landing page: open privagent.test to continue',
           state.email,
@@ -362,6 +394,7 @@ describe('agent loop (deterministic, in-extension)', () => {
   it('blocks egress when local visual OCR confirms a credential', async () => {
     const page = fakePage();
     page.scan = async () => ({
+      ...nextObservation(),
       pageText: 'Canvas account screen',
       snapshot: {
         url: 'https://canvas.test/account',

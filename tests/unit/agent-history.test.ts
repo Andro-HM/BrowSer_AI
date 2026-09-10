@@ -12,9 +12,18 @@ import type { ScanPageResponse } from '../../extension/src/types/messages';
 
 const CANARY_EMAIL = 'CANARY_HISTORY_001@example.test';
 
+let observationSequence = 0;
+function nextObservation() {
+  return {
+    observationEpoch: `history-observation-${++observationSequence}`,
+    documentGeneration: 'history-document',
+  };
+}
+
 function submitPage() {
   const state = { submitted: false };
   const scan = async (): Promise<ScanPageResponse> => ({
+    ...nextObservation(),
     pageText: state.submitted ? 'Confirmation screen' : 'Order form — review and submit',
     snapshot: null,
     structure: [
@@ -162,6 +171,7 @@ describe('lastExecutedAction history + pre-execution duplicate guard', () => {
 
   it('never carries raw PII in history, and the firewall rejects smuggled history', async () => {
     const scan = async (): Promise<ScanPageResponse> => ({
+      ...nextObservation(),
       pageText: `Contact ${CANARY_EMAIL}`,
       snapshot: null,
       structure: [

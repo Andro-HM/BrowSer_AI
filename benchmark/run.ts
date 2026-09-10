@@ -246,9 +246,12 @@ export interface LeakageProbeResult {
 export async function runLeakageProbe(page: PageFixture): Promise<LeakageProbeResult> {
   const values = new Map<string, string>();
   let submitted = false;
+  let observation = 0;
   const requests: string[] = [];
 
   const scan = async (): Promise<ScanPageResponse> => ({
+    observationEpoch: `benchmark-observation-${++observation}`,
+    documentGeneration: `benchmark-document-${page.id}`,
     pageText: [
       page.pageText,
       ...page.structure

@@ -3,7 +3,23 @@
 
 import type { AgentAction, DomVisualSnapshot } from './contracts';
 
-/** M3 — request cheap DOM visual-candidate metadata for the active tab. */
+/** Local-only identity for one content-script document and one fresh observation. */
+export interface ObservationContext {
+  observationEpoch: string;
+  documentGeneration: string;
+}
+
+/** Resolve the active page once, at the start of a panel operation or agent run. */
+export const RESOLVE_ACTIVE_TAB = 'RESOLVE_ACTIVE_TAB';
+
+export interface ResolveActiveTabResponse {
+  tabId?: number;
+  restricted?: boolean;
+  /** Fixed, non-sensitive diagnostic code. */
+  error?: string;
+}
+
+/** M3 — request cheap DOM visual-candidate metadata for an explicitly pinned tab. */
 export const COLLECT_VISUAL_CANDIDATES = 'COLLECT_VISUAL_CANDIDATES';
 
 export interface VisualCandidatesResponse {
@@ -15,7 +31,7 @@ export interface VisualCandidatesResponse {
 }
 
 /**
- * Run a full privacy scan of the active tab. The in-page collector returns only the
+ * Run a full privacy scan of an explicitly pinned tab. The in-page collector returns only the
  * structured inputs the local pipeline (M2 PII + M3 visual + M4 policy + M5 enforce)
  * needs — never raw markup. `pageText` is user-visible text used INTERNALLY only (it
  * is fed to detection/sanitization and never rendered); the popup consumes the derived,
@@ -23,7 +39,7 @@ export interface VisualCandidatesResponse {
  */
 export const SCAN_PAGE = 'SCAN_PAGE';
 
-export interface ScanPageResponse {
+export interface ScanPageResponse extends Partial<ObservationContext> {
   /**
    * The page's user-visible text (whole page incl. below-fold `innerText`, plus visible
    * form-field values) — the surface M2 detection runs over. Internal only; never
@@ -67,7 +83,7 @@ export interface FieldStructure {
 }
 
 /**
- * Scroll the active tab's viewport to document y `top`, for BOUNDED below-the-fold band
+ * Scroll the pinned tab's viewport to document y `top`, for BOUNDED below-the-fold band
  * capture (M3). `captureVisibleTab` only ever returns the current viewport, and Chrome
  * exposes no off-screen capture API, so covering below-fold IMAGES requires scrolling to
  * a few discrete offsets and capturing each. The content script scrolls, lets layout
@@ -84,14 +100,14 @@ export interface ScrollViewportResponse {
 }
 
 /**
- * Capture the active tab's CURRENTLY VISIBLE viewport as a PNG data URL (M3).
+ * Capture the pinned tab's CURRENTLY VISIBLE viewport as a PNG data URL (M3).
  *
  * WHY THE BACKGROUND, NOT THE PANEL: `chrome.tabs.captureVisibleTab` needs an explicit,
  * correctly-resolved window. From a side-panel document `WINDOW_ID_CURRENT` does not
  * reliably resolve to the browser window that holds the web page, so a panel-side call
  * fails with `VISUAL_CAPTURE_UNAVAILABLE` even on an ordinary page. The background worker
- * already resolves the active tab (and its `windowId`) reliably — the same path SCAN_PAGE
- * uses — so capture is brokered here and only the resulting data URL is returned to the
+ * validates the pinned tab and its `windowId` — the same target SCAN_PAGE uses — so
+ * capture is brokered here and only the resulting data URL is returned to the
  * panel, which then rasterizes/crops LOCALLY. The data URL never leaves the device.
  */
 export const CAPTURE_VIEWPORT = 'CAPTURE_VIEWPORT';
@@ -102,9 +118,7 @@ export interface CaptureViewportResponse {
   /** Set when the browser forbids capturing this surface (fail closed). */
   restricted?: boolean;
   /**
-   * Short, non-sensitive diagnostic. Either a structured code (e.g. NO_ACTIVE_TAB) or the
-   * Chrome API's own capture-failure string (an API diagnostic, never pixels/page text) so
-   * the cause of a VISUAL_CAPTURE_UNAVAILABLE is visible in the trace.
+   * Short, fixed, non-sensitive diagnostic code. Chrome error strings are not forwarded.
    */
   error?: string;
 }
@@ -118,13 +132,17 @@ export interface CaptureViewportResponse {
  */
 export const EXECUTE_ACTION = 'EXECUTE_ACTION';
 
-export interface ExecuteActionMessage {
+export interface ExecuteActionMessage extends ObservationContext {
   type: typeof EXECUTE_ACTION;
+  targetTabId: number;
   action: AgentAction;
 }
 
 export interface ExecuteActionResponse {
   ok: boolean;
-  /** Structured outcome code: OK, NOT_FOUND, NOT_VISIBLE, DISABLED, NO_SUCH_OPTION, UNSUPPORTED, EXEC_FAILED. */
+  /** Structured outcome code only; never browser error text or page content. */
   code?: string;
 }
+
+/** Internal pre-capture guard; no page content crosses this message. */
+export const VALIDATE_OBSERVATION = 'VALIDATE_OBSERVATION';

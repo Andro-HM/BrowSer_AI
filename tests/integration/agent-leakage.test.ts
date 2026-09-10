@@ -26,6 +26,14 @@ import type { RemoteAgentRequest } from '../../extension/src/types/contracts';
 const CANARY_EMAIL = 'CANARY_EMAIL_001@example.test';
 const CANARY_PHONE = '555-123-4567';
 
+let observationSequence = 0;
+function nextObservation() {
+  return {
+    observationEpoch: `leakage-observation-${++observationSequence}`,
+    documentGeneration: 'leakage-document',
+  };
+}
+
 const MODULE_ROOT = join(process.cwd(), 'extension', 'src');
 
 function sourceFiles(relativeDir: string): string[] {
@@ -102,6 +110,7 @@ describe('agent loop network isolation', () => {
     const scan = async (): Promise<import('../../extension/src/types/messages').ScanPageResponse> => {
       void state;
       return {
+        ...nextObservation(),
         pageText: [
           'Demo form',
           `Contact: ${CANARY_EMAIL}`,

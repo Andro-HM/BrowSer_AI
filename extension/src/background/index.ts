@@ -1,5 +1,5 @@
 // PrivAgent background service worker.
-// Brokers messages between the side panel and the active tab. It holds no page content:
+// Brokers messages between the side panel and an explicitly pinned tab. It holds no page content:
 // SCAN_PAGE / SCROLL_VIEWPORT are relayed to the content script, which returns only
 // structured inputs (SCAN_PAGE) or a scroll offset (SCROLL_VIEWPORT).
 //
@@ -15,8 +15,10 @@ import { isRestrictedUrl } from '../perception/visual/restricted';
 import {
   CAPTURE_VIEWPORT,
   EXECUTE_ACTION,
+  RESOLVE_ACTIVE_TAB,
   SCAN_PAGE,
   SCROLL_VIEWPORT,
+  VALIDATE_OBSERVATION,
   type CaptureViewportResponse,
   type ExecuteActionResponse,
   type ScanPageResponse,
@@ -57,21 +59,36 @@ async function injectContentScript(tabId: number): Promise<boolean> {
 }
 
 /**
- * Relay `message` to the active tab, injecting the content script on demand if the first
+ * Resolve the explicitly pinned target and ensure the user has not switched away from it.
+ * Fixed codes only: Chrome errors can contain URLs, so they never cross this boundary.
+ */
+async function getPinnedActiveTab(targetTabId: unknown): Promise<chrome.tabs.Tab | string> {
+  if (!Number.isInteger(targetTabId) || (targetTabId as number) < 0) return 'TARGET_TAB_REQUIRED';
+  try {
+    const tab = await chrome.tabs.get(targetTabId as number);
+    if (tab.id === undefined) return 'TARGET_TAB_DISAPPEARED';
+    if (tab.active !== true) return 'TARGET_TAB_CHANGED';
+    if (isRestrictedUrl(tab.url ?? '')) return 'RESTRICTED';
+    return tab;
+  } catch {
+    return 'TARGET_TAB_DISAPPEARED';
+  }
+}
+
+/**
+ * Relay `message` to the pinned tab, injecting the content script on demand if the first
  * attempt finds no receiver. `onMissing` builds the fail-closed response used when the tab
  * is absent, restricted, or genuinely unreachable.
  */
-async function relayToActiveTab<T>(
+async function relayToPinnedTab<T>(
+  targetTabId: unknown,
   message: unknown,
   isMissing: (response: T | undefined) => boolean,
   fail: (code: string) => T,
 ): Promise<T> {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const activeTab = tabs[0];
-
-  if (activeTab?.id === undefined) return fail('NO_ACTIVE_TAB');
-  if (isRestrictedUrl(activeTab.url ?? '')) return fail('RESTRICTED');
-  const tabId = activeTab.id;
+  const target = await getPinnedActiveTab(targetTabId);
+  if (typeof target === 'string') return fail(target);
+  const tabId = target.id as number;
 
   let response = await sendToTab<T>(tabId, message);
   if (isMissing(response)) {
@@ -82,6 +99,8 @@ async function relayToActiveTab<T>(
     // it a couple of short attempts to settle before giving up.
     for (let attempt = 0; attempt < 3 && isMissing(response); attempt++) {
       await new Promise((r) => setTimeout(r, 50));
+      const stillTargeted = await getPinnedActiveTab(tabId);
+      if (typeof stillTargeted === 'string') return fail(stillTargeted);
       response = await sendToTab<T>(tabId, message);
     }
     if (isMissing(response)) return fail('PAGE_UNREACHABLE');
@@ -90,47 +109,77 @@ async function relayToActiveTab<T>(
 }
 
 /**
- * Capture the active tab's visible viewport as a PNG data URL, resolving the tab's OWN
+ * Capture the pinned tab's visible viewport as a PNG data URL, resolving the tab's OWN
  * `windowId` first. This is the reason capture is brokered here rather than run in the
  * side panel: from a panel document `WINDOW_ID_CURRENT` (-2) does not reliably resolve to
  * the window that holds the web page, so `captureVisibleTab` there fails on ordinary pages.
- * The background worker already resolves the active tab reliably (same path as SCAN_PAGE).
+ * The background worker verifies the pinned tab (same target as SCAN_PAGE).
  * The returned data URL is local only — it is handed straight back to the panel for local
  * rasterization and never leaves the device.
  */
-function captureActiveViewport(): Promise<CaptureViewportResponse> {
+async function capturePinnedViewport(
+  targetTabId: unknown,
+  observationEpoch: unknown,
+  documentGeneration: unknown,
+): Promise<CaptureViewportResponse> {
+  const target = await getPinnedActiveTab(targetTabId);
+  if (typeof target === 'string') {
+    return target === 'RESTRICTED' ? { restricted: true } : { error: target };
+  }
+  if (target.id === undefined || target.windowId === undefined) return { error: 'TARGET_TAB_DISAPPEARED' };
+
+  const validity = await sendToTab<ExecuteActionResponse>(target.id, {
+    type: VALIDATE_OBSERVATION,
+    observationEpoch,
+    documentGeneration,
+  });
+  if (validity?.ok !== true) return { error: validity?.code ?? 'OBSERVATION_STALE' };
+
+  const activeBefore = await chrome.tabs.query({ active: true, windowId: target.windowId });
+  if (activeBefore[0]?.id !== target.id) return { error: 'TARGET_TAB_CHANGED' };
+
   return new Promise((resolve) => {
-    void chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-      const activeTab = tabs[0];
-      if (activeTab?.id === undefined || activeTab.windowId === undefined) {
-        resolve({ error: 'NO_ACTIVE_TAB' });
-        return;
-      }
-      if (isRestrictedUrl(activeTab.url ?? '')) {
-        resolve({ restricted: true });
-        return;
-      }
-      chrome.tabs.captureVisibleTab(activeTab.windowId, { format: 'png' }, (dataUrl) => {
-        // The Chrome error string is an API diagnostic (never pixels/page text); forward it
-        // so a VISUAL_CAPTURE_UNAVAILABLE has a visible cause. `dataUrl` is local only.
+      chrome.tabs.captureVisibleTab(target.windowId, { format: 'png' }, (dataUrl) => {
+        // Chrome error strings can contain a URL, so expose only a fixed diagnostic.
+        // `dataUrl` is local only.
         const lastError = chrome.runtime.lastError;
         if (lastError) {
-          resolve({ error: lastError.message ?? 'CAPTURE_FAILED' });
+          resolve({ error: 'CAPTURE_FAILED' });
           return;
         }
         if (!dataUrl) {
           resolve({ error: 'EMPTY_CAPTURE' });
           return;
         }
-        resolve({ dataUrl });
+        void chrome.tabs.query({ active: true, windowId: target.windowId }).then((activeAfter) => {
+          if (activeAfter[0]?.id !== target.id) {
+            resolve({ error: 'TARGET_TAB_CHANGED' });
+            return;
+          }
+          resolve({ dataUrl });
+        });
       });
-    });
   });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === RESOLVE_ACTIVE_TAB) {
+    void chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+      const tab = tabs[0];
+      if (tab?.id === undefined) {
+        sendResponse({ error: 'NO_ACTIVE_TAB' });
+      } else if (isRestrictedUrl(tab.url ?? '')) {
+        sendResponse({ restricted: true });
+      } else {
+        sendResponse({ tabId: tab.id });
+      }
+    });
+    return true;
+  }
+
   if (message?.type === SCAN_PAGE) {
-    void relayToActiveTab<ScanPageResponse>(
+    void relayToPinnedTab<ScanPageResponse>(
+      message.targetTabId,
       { type: SCAN_PAGE },
       // A missing receiver yields `undefined`; a real scan always has pageText or an error.
       (response) => response === undefined,
@@ -140,8 +189,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === SCROLL_VIEWPORT) {
-    void relayToActiveTab<ScrollViewportResponse>(
-      { type: SCROLL_VIEWPORT, top: message.top },
+    void relayToPinnedTab<ScrollViewportResponse>(
+      message.targetTabId,
+      {
+        type: SCROLL_VIEWPORT,
+        top: message.top,
+        observationEpoch: message.observationEpoch,
+        documentGeneration: message.documentGeneration,
+      },
       (response) => response === undefined,
       (code) => ({ error: code }),
     ).then(sendResponse);
@@ -149,16 +204,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === CAPTURE_VIEWPORT) {
-    void captureActiveViewport().then(sendResponse);
+    void capturePinnedViewport(
+      message.targetTabId,
+      message.observationEpoch,
+      message.documentGeneration,
+    ).then(sendResponse);
     return true; // async sendResponse
   }
 
-  // M6 — execute one validated structured action in the active tab. The action has
+  // M6 — execute one validated structured action in the pinned tab. The action has
   // already passed schema + policy validation and LOCAL alias resolution before it is
   // relayed; the worker adds no interpretation and forwards structured codes only.
   if (message?.type === EXECUTE_ACTION) {
-    void relayToActiveTab<ExecuteActionResponse>(
-      { type: EXECUTE_ACTION, action: message.action },
+    void relayToPinnedTab<ExecuteActionResponse>(
+      message.targetTabId,
+      {
+        type: EXECUTE_ACTION,
+        action: message.action,
+        observationEpoch: message.observationEpoch,
+        documentGeneration: message.documentGeneration,
+      },
       (response) => response === undefined,
       (code) => ({ ok: false, code }),
     ).then(sendResponse);

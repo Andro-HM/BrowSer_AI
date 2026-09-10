@@ -13,8 +13,10 @@ import {
   EXECUTE_ACTION,
   SCAN_PAGE,
   SCROLL_VIEWPORT,
+  VALIDATE_OBSERVATION,
   type ExecuteActionResponse,
   type FieldStructure,
+  type ObservationContext,
   type ScanPageResponse,
   type ScrollViewportResponse,
 } from '../types/messages';
@@ -69,10 +71,10 @@ function labelFor(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
  * `SanitizedNode`s — filled booleans + detection-gated labels — before anything can be
  * considered for egress. Buttons are included so the planner can find submit controls.
  */
-function collectFieldStructure(): FieldStructure[] {
+function collectFieldStructure(): { structure: FieldStructure[]; observation: ObservationContext } {
   const out: FieldStructure[] = [];
   const nodes = document.querySelectorAll('input, textarea, select, button');
-  controls.beginObservation();
+  const observation = controls.beginObservation();
 
   for (const el of Array.from(nodes)) {
     const tag = el.tagName.toLowerCase();
@@ -115,7 +117,7 @@ function collectFieldStructure(): FieldStructure[] {
     out.push(structure);
   }
 
-  return out;
+  return { structure: out, observation };
 }
 
 /**
@@ -124,7 +126,13 @@ function collectFieldStructure(): FieldStructure[] {
  * only the LOCAL extension messaging channel. No page-supplied string is ever evaluated,
  * and no arbitrary code runs (CONTRIBUTING.md §6/§7).
  */
-function executeActionInPage(action: AgentAction): ExecuteActionResponse {
+function executeActionInPage(
+  action: AgentAction,
+  expected: ObservationContext,
+): ExecuteActionResponse {
+  const validity = controls.validate(expected);
+  if (!validity.ok) return validity;
+
   if (action.action === 'SCROLL') {
     window.scrollBy({ top: action.amount, left: 0, behavior: 'auto' });
     return { ok: true, code: 'OK' };
@@ -133,20 +141,23 @@ function executeActionInPage(action: AgentAction): ExecuteActionResponse {
   if (action.action === 'NAVIGATE') {
     // Policy validation (allowlist) already approved this URL before it got here.
     // Respond FIRST, then navigate: the reply channel dies with the old document.
+    controls.invalidate();
     setTimeout(() => window.location.assign(action.url), 0);
     return { ok: true, code: 'OK' };
   }
 
-  return executeControlAction(action, controls);
+  return executeControlAction(action, controls, expected);
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === SCAN_PAGE) {
     try {
+      const { structure, observation } = collectFieldStructure();
       sendResponse({
         pageText: collectPageText(),
         snapshot: collectVisualCandidatesInPage(),
-        structure: collectFieldStructure(),
+        structure,
+        ...observation,
       } satisfies ScanPageResponse);
     } catch {
       // Never forward an error message: it could echo page content. A fixed code only.
@@ -157,7 +168,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message?.type === EXECUTE_ACTION) {
     try {
-      sendResponse(executeActionInPage(message.action as AgentAction) satisfies ExecuteActionResponse);
+      sendResponse(executeActionInPage(message.action as AgentAction, {
+        observationEpoch: message.observationEpoch,
+        documentGeneration: message.documentGeneration,
+      }) satisfies ExecuteActionResponse);
     } catch {
       // Never forward an error message: it could echo page content. A fixed code only.
       sendResponse({ ok: false, code: 'EXEC_FAILED' } satisfies ExecuteActionResponse);
@@ -169,6 +183,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // report the position actually reached. Geometry only — no page content crosses here.
   if (message?.type === SCROLL_VIEWPORT) {
     try {
+      const validity = controls.validate({
+        observationEpoch: message.observationEpoch,
+        documentGeneration: message.documentGeneration,
+      });
+      if (!validity.ok) {
+        sendResponse({ error: validity.code } satisfies ScrollViewportResponse);
+        return undefined;
+      }
       const top = typeof message.top === 'number' && Number.isFinite(message.top)
         ? Math.max(0, Math.floor(message.top))
         : 0;
@@ -180,7 +202,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return undefined; // responded synchronously
   }
 
+  if (message?.type === VALIDATE_OBSERVATION) {
+    sendResponse(controls.validate({
+      observationEpoch: message.observationEpoch,
+      documentGeneration: message.documentGeneration,
+    }) satisfies ExecuteActionResponse);
+    return undefined;
+  }
+
   return undefined;
 });
+
+window.addEventListener('pagehide', () => controls.invalidate());
 
 export {};
