@@ -12,6 +12,12 @@ import { createActionBridge } from '../actions';
 import { createPrivacyFirewall } from '../firewall';
 import { createDeterministicPlanner } from '../agent/planner';
 import { createSessionNavigationPolicy } from '../agent/session-policy';
+import {
+  REMOTE_PLAN_ENDPOINT,
+  providerForPlannerMode,
+  timeoutForPlannerMode,
+  type PlannerMode,
+} from '../agent/provider-options';
 import { DEFAULT_ACTION_POLICY } from '../actions/validate';
 import { createLocalVault } from '../vault';
 import { SCAN_PAGE, type ScanPageResponse } from '../types/messages';
@@ -22,7 +28,7 @@ import { recordVisualStats } from './visual-stats';
 type RunState = 'idle' | 'running' | 'done';
 
 /** Backend planner endpoint (AGENT_PROVIDER=gemini on the FastAPI service). */
-const REMOTE_PLAN_ENDPOINT = 'http://localhost:8000/v1/plan';
+export { REMOTE_PLAN_ENDPOINT };
 
 const STATUS_TEXT: Record<AgentRunResult['status'], string> = {
   completed: '✓ Task completed',
@@ -36,7 +42,7 @@ const STATUS_TEXT: Record<AgentRunResult['status'], string> = {
 
 export function AgentTask() {
   const [task, setTask] = useState('');
-  const [plannerMode, setPlannerMode] = useState<'local' | 'gemini' | 'offline'>('local');
+  const [plannerMode, setPlannerMode] = useState<PlannerMode>('local');
   const [state, setState] = useState<RunState>('idle');
   const [result, setResult] = useState<AgentRunResult | null>(null);
 
@@ -60,14 +66,15 @@ export function AgentTask() {
       const navigationPolicy = createSessionNavigationPolicy();
       // ONE firewall shared by the loop gate and the remote gateway's pre-transmit gate.
       const firewall = createPrivacyFirewall();
-      // Planner mode: Local AI (Ollama) and Gemini go through the backend over the SAME
-      // fail-closed firewall; Offline uses the in-extension deterministic planner (no
-      // network at all). The provider hint lets the backend pick per run without a restart.
+      // Planner mode: Local AI (Ollama), Gemini, and Zen go through the backend over
+      // the SAME fail-closed firewall; Offline uses the in-extension deterministic
+      // planner (no network at all). The provider hint lets the backend pick per
+      // run without a restart.
       // Optional backend bearer token (build-time `VITE_PRIVAGENT_API_KEY`).
       // Absent = dev mode: requests go without an Authorization header.
       const apiKey = import.meta.env.VITE_PRIVAGENT_API_KEY as string | undefined;
-      // Timeouts must cover the backend wait: Gemini 30s, Ollama 90s.
-      const timeoutMs = plannerMode === 'local' ? 95_000 : 35_000;
+      // Timeouts must cover the backend wait: Gemini 30s, Zen 35s, Ollama 90s.
+      const timeoutMs = timeoutForPlannerMode(plannerMode);
       const gateway =
         plannerMode === 'offline'
           ? createDeterministicPlanner()
@@ -77,7 +84,7 @@ export function AgentTask() {
               timeoutMs,
               ...(apiKey !== undefined && apiKey.length > 0 ? { apiKey } : {}),
             });
-      const provider = plannerMode === 'offline' ? undefined : (plannerMode === 'local' ? 'ollama' : 'gemini');
+      const provider = plannerMode === 'offline' ? undefined : providerForPlannerMode(plannerMode);
 
       const runResult = await runAgentLoop({
         task,
@@ -164,6 +171,17 @@ export function AgentTask() {
             disabled={state === 'running'}
           />
           Gemini
+        </label>
+        <label className="flex items-center gap-1">
+          <input
+            data-testid="planner-mode-zen"
+            type="radio"
+            name="planner-mode"
+            checked={plannerMode === 'zen'}
+            onChange={() => setPlannerMode('zen')}
+            disabled={state === 'running'}
+          />
+          Zen (GPT-5.6 Luna)
         </label>
         <label className="flex items-center gap-1">
           <input

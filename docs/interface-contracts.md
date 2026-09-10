@@ -40,7 +40,7 @@ alias `POST /v1/act`). Field table — exactly as implemented in
 | `sanitizedVisibleText` | string | yes | ≤ 100 000 chars, aliased |
 | `aliases` | `{ alias, category }[]` | yes | ≤ 100 bindings, TYPE ONLY — never the value, never the mapping |
 | `availableActions` | `AgentActionKind[]` | yes | `CLICK \| TYPE \| SELECT \| SCROLL \| NAVIGATE` |
-| `provider` | `deterministic \| gemini \| ollama` \| null | no (default `null` → `AGENT_PROVIDER` env → `deterministic`) | planner hint only |
+| `provider` | `deterministic \| gemini \| ollama \| zen` \| null | no (default `null` → `AGENT_PROVIDER` env → `deterministic`) | planner hint only |
 | `policy` | `{ privacyMode, navigationAllowlist }` | yes | `privacyMode`: only `"strict"` accepted (anything else → 422); `navigationAllowlist: string[]` (default `[]` = navigation denied) |
 
 `SanitizedNode`: `tag: input \| textarea \| select \| button` (required) ·

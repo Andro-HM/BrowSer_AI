@@ -116,7 +116,7 @@ describe('privacy firewall', () => {
 
   it('accepts an optional provider hint and rejects unknown providers', async () => {
     const firewall = createPrivacyFirewall();
-    for (const provider of ['gemini', 'ollama', 'deterministic'] as const) {
+    for (const provider of ['gemini', 'ollama', 'deterministic', 'zen'] as const) {
       expect((await firewall.inspect(cleanRequest({ provider }))).allowed).toBe(true);
     }
     const bad = cleanRequest({ provider: 'webgpu' as never });

@@ -24,9 +24,10 @@ limitations list. Nothing is claimed that was not run.
 
 ## Backend provider env (`backend/fastapi`)
 
-- `AGENT_PROVIDER=deterministic|gemini|ollama` (per-run override via `PlanRequest.provider`)
+- `AGENT_PROVIDER=deterministic|gemini|ollama|zen` (per-run override via `PlanRequest.provider`)
 - Gemini: `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.6-flash`)
 - Local/Ollama: `OLLAMA_URL` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `gemma3:12b`)
+- OpenCode Zen: `OPENCODE_ZEN_API_KEY`, `OPENCODE_ZEN_MODEL` (default `gpt-5.6-luna`)
 
 ## Pointers
 

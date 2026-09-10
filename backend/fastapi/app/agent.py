@@ -122,7 +122,7 @@ class PlanRequest(StrictModel):
     availableActions: list[
         Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
     ]
-    provider: Literal["deterministic", "gemini", "ollama"] | None = None
+    provider: Literal["deterministic", "gemini", "ollama", "zen"] | None = None
     policy: ActionPolicy
     lastExecutedAction: LastExecutedAction | None = None
 
@@ -286,6 +286,10 @@ def get_provider(name: str) -> Planner:
         from .ollama_provider import create_ollama_provider
 
         return create_ollama_provider()
+    if name == "zen":
+        from .zen_provider import create_zen_provider
+
+        return create_zen_provider()
     if name == "remote":
         return RemotePlannerStub()
     return DeterministicPlanner()

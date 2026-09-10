@@ -416,7 +416,7 @@ export interface RemoteAgentRequest {
    * 'deterministic' forces the offline rules engine even when the backend defaults to
    * a model provider.
    */
-  provider?: 'gemini' | 'ollama' | 'deterministic';
+  provider?: 'gemini' | 'ollama' | 'deterministic' | 'zen';
   sanitizedPageStructure: SanitizedNode[];
   sanitizedVisibleText: string;
   aliases: { alias: string; category: SensitiveCategory }[];

@@ -235,7 +235,7 @@ export function createPrivacyFirewall(): PrivacyFirewall {
         const provider = r['provider'];
         if (
           typeof provider !== 'string' ||
-          !['gemini', 'ollama', 'deterministic'].includes(provider)
+          !['gemini', 'ollama', 'deterministic', 'zen'].includes(provider)
         ) {
           return Promise.resolve(deny('FIREWALL_MALFORMED'));
         }
