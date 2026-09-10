@@ -63,6 +63,7 @@ const REQUEST_KEYS = new Set([
   'aliases',
   'availableActions',
   'policy',
+  'lastExecutedAction',
 ]);
 
 function deny(reason: string): FirewallVerdict {
@@ -115,6 +116,10 @@ function payloadContainsDetectablePII(request: RemoteAgentRequest): boolean {
     if (node.inputType !== undefined) texts.push(node.inputType);
     if (node.label !== undefined) texts.push(node.label);
     if (node.name !== undefined) texts.push(node.name);
+    texts.push(node.controlId);
+  }
+  if (request.lastExecutedAction?.controlId !== undefined) {
+    texts.push(request.lastExecutedAction.controlId);
   }
   return texts.some((text) => detectPII(text).length > 0);
 }
@@ -152,6 +157,10 @@ function containsPixelPayload(request: RemoteAgentRequest): boolean {
     if (node.inputType !== undefined) texts.push(node.inputType);
     if (node.label !== undefined) texts.push(node.label);
     if (node.name !== undefined) texts.push(node.name);
+    texts.push(node.controlId);
+  }
+  if (request.lastExecutedAction?.controlId !== undefined) {
+    texts.push(request.lastExecutedAction.controlId);
   }
   return texts.some((text) => MEDIA_DATA_URL.test(text) || BASE64_RUN.test(text));
 }
@@ -169,9 +178,10 @@ export function createPrivacyFirewall(): PrivacyFirewall {
       }
 
       const r = request as unknown as Record<string, unknown>;
-      // `pageOrigin` is OPTIONAL (origin-only when present); every other key is required.
+      // `pageOrigin`, `provider`, and `lastExecutedAction` are OPTIONAL (absent on
+      // the first step); every other key is required.
       const required = [...REQUEST_KEYS].filter(
-        (key) => key !== 'pageOrigin' && key !== 'provider',
+        (key) => key !== 'pageOrigin' && key !== 'provider' && key !== 'lastExecutedAction',
       );
       const missing = required.filter((key) => !(key in r));
       if (missing.length > 0) return Promise.resolve(deny('FIREWALL_MALFORMED'));
@@ -227,6 +237,37 @@ export function createPrivacyFirewall(): PrivacyFirewall {
           typeof provider !== 'string' ||
           !['gemini', 'ollama', 'deterministic'].includes(provider)
         ) {
+          return Promise.resolve(deny('FIREWALL_MALFORMED'));
+        }
+      }
+
+      // lastExecutedAction: optional, metadata-only history of the immediately
+      // previous successful action. Exact shape, no values/URLs/selectors —
+      // anything else fails closed.
+      if (r['lastExecutedAction'] !== undefined) {
+        const history = r['lastExecutedAction'] as unknown as Record<string, unknown>;
+        if (typeof history !== 'object' || history === null) {
+          return Promise.resolve(deny('FIREWALL_MALFORMED'));
+        }
+        const keys = Object.keys(history);
+        const hasControlId = keys.includes('controlId');
+        const expected = hasControlId ? ['action', 'controlId', 'outcome'] : ['action', 'outcome'];
+        if (keys.length !== expected.length || !expected.every((key) => keys.includes(key))) {
+          return Promise.resolve(deny('FIREWALL_MALFORMED'));
+        }
+        if (!(ALLOWED_ACTION_KINDS as readonly string[]).includes(history['action'] as string)) {
+          return Promise.resolve(deny('FIREWALL_MALFORMED'));
+        }
+        if (history['outcome'] !== 'executed') {
+          return Promise.resolve(deny('FIREWALL_MALFORMED'));
+        }
+        const kind = history['action'] as string;
+        if (kind === 'CLICK' || kind === 'TYPE' || kind === 'SELECT') {
+          if (!isControlHandle(history['controlId'])) {
+            return Promise.resolve(deny('FIREWALL_MALFORMED'));
+          }
+        } else if (hasControlId) {
+          // SCROLL/NAVIGATE carry no control handle — a present one is smuggling.
           return Promise.resolve(deny('FIREWALL_MALFORMED'));
         }
       }

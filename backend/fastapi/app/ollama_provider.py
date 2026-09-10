@@ -94,6 +94,8 @@ class OllamaProvider:
             "aliases": [binding.model_dump() for binding in request.aliases],
             "availableActions": request.availableActions,
         }
+        if request.lastExecutedAction is not None:
+            payload["lastExecutedAction"] = request.lastExecutedAction.model_dump()
 
         try:
             response = httpx.post(

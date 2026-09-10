@@ -395,6 +395,18 @@ export interface PrivacyEvent {
  * Sanitized request that may cross the remote boundary.
  * See docs/threat-model.md §5 (allowlist) and §6 (denylist).
  */
+export interface LastExecutedAction {
+  /** Kind of the immediately previous successfully executed action. */
+  action: AgentActionKind;
+  /**
+   * Opaque control handle for targeted actions (CLICK/TYPE/SELECT) only.
+   * Absent for SCROLL/NAVIGATE. Never a selector, URL, value, or raw text.
+   */
+  controlId?: string;
+  /** Always 'executed': only successful executions are reported. */
+  outcome: 'executed';
+}
+
 export interface RemoteAgentRequest {
   taskObjective: string;
   /** Current page origin ONLY (never the full URL — path/query can carry content). */
@@ -410,6 +422,14 @@ export interface RemoteAgentRequest {
   aliases: { alias: string; category: SensitiveCategory }[];
   availableActions: AgentActionKind[];
   policy: { privacyMode: string; navigationAllowlist: string[] };
+  /**
+   * The immediately previous successfully executed action (absent on the first
+   * step). Metadata only — kind + opaque CONTROL_n handle + 'executed' outcome.
+   * Carries no value, URL, selector, or raw page text, so a planner can reason
+   * about completion from the CURRENT sanitized state plus this history without
+   * ever seeing protected content.
+   */
+  lastExecutedAction?: LastExecutedAction;
 }
 
 // ---------------------------------------------------------------------------

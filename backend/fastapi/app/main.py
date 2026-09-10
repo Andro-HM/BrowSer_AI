@@ -120,6 +120,11 @@ def _plan_impl(payload: PlanRequest) -> dict:
             struct_texts.append(node.label)
         if node.name is not None:
             struct_texts.append(node.name)
+    if payload.lastExecutedAction is not None:
+        struct_texts.append(payload.lastExecutedAction.action)
+        struct_texts.append(payload.lastExecutedAction.outcome)
+        if payload.lastExecutedAction.controlId is not None:
+            struct_texts.append(payload.lastExecutedAction.controlId)
     # pageOrigin is a URL: query strings can smuggle raw PII (?email=user@x.com).
     if payload.pageOrigin is not None:
         struct_texts.append(payload.pageOrigin)

@@ -16,7 +16,7 @@ import re
 from urllib.parse import urlparse
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ALIAS_PATTERN = re.compile(r"^USER_[A-Z]+_\d+$")
 CONTROL_ID_PATTERN = r"^CONTROL_[1-9]\d*$"
@@ -62,6 +62,27 @@ class AliasBinding(StrictModel):
     ]
 
 
+class LastExecutedAction(StrictModel):
+    """Minimal non-sensitive history: the immediately previous successful action.
+
+    Kind + opaque CONTROL_n handle only — no value, URL, amount, selector, or
+    page text. Only `outcome="executed"` is ever reported.
+    """
+
+    action: Literal["CLICK", "TYPE", "SELECT", "SCROLL", "NAVIGATE"]
+    controlId: str | None = Field(default=None, pattern=CONTROL_ID_PATTERN, max_length=64)
+    outcome: Literal["executed"]
+
+    @model_validator(mode="after")
+    def require_history_shape(self) -> "LastExecutedAction":
+        targeted = self.action in ("CLICK", "TYPE", "SELECT")
+        if targeted and self.controlId is None:
+            raise ValueError("controlId is required for targeted history actions")
+        if not targeted and self.controlId is not None:
+            raise ValueError("controlId is only allowed for targeted history actions")
+        return self
+
+
 class ActionPolicy(StrictModel):
     privacyMode: Literal["strict"]
     navigationAllowlist: list[str] = Field(default_factory=list)
@@ -103,6 +124,7 @@ class PlanRequest(StrictModel):
     ]
     provider: Literal["deterministic", "gemini", "ollama"] | None = None
     policy: ActionPolicy
+    lastExecutedAction: LastExecutedAction | None = None
 
     @field_validator("pageOrigin")
     @classmethod

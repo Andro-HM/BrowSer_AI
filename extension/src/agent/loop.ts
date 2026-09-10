@@ -8,7 +8,8 @@
 //     → privacy firewall.inspect (fail closed — the ONLY egress gate, §5 Rule 6)
 //     → gateway.plan (deterministic planner or remote provider)
 //     → action bridge: schema → policy → LOCAL alias resolution → constrained execution
-//     → re-observe (the sanitized page state is the loop's only memory)
+//     → re-observe (the CURRENT sanitized page state plus the minimal
+//        lastExecutedAction metadata is the loop's memory)
 //
 // Fail-closed stops: blocked page, restricted surface, unenforceable findings, firewall
 // deny, planner/execution failure. Each stop is a structured status — never silent
@@ -17,6 +18,7 @@
 import type {
   AgentAction,
   DomVisualSnapshot,
+  LastExecutedAction,
   RemoteAgentRequest,
   SanitizedNode,
   VisualPerceptionResult,
@@ -131,10 +133,49 @@ export function toSanitizedNodes(structure: ScanPageResponse['structure']): Sani
   return out;
 }
 
+/**
+ * Reduce a successfully executed action to the minimal non-sensitive history
+ * sent as `lastExecutedAction` on the next planner request. Kind + opaque
+ * CONTROL_n handle only — no value, URL, amount, selector, or page text, so
+ * raw protected values can never ride along (CONTRIBUTING.md §5 Rule 4).
+ */
+export function toLastExecutedAction(action: AgentAction): LastExecutedAction {
+  if (action.action === 'CLICK' || action.action === 'TYPE' || action.action === 'SELECT') {
+    return { action: action.action, controlId: action.target, outcome: 'executed' };
+  }
+  return { action: action.action, outcome: 'executed' };
+}
+
+/**
+ * Pre-execution repeat check: the planner proposed the exact same non-scroll
+ * action that just succeeded. SCROLLs are exempt (repeated scrolling is
+ * progress-seeking toward below-fold controls); NAVIGATEs carry no URL in the
+ * history metadata, so two NAVIGATEs are never conflated here — the
+ * post-execution exact-match NO_PROGRESS guard below remains their fail-safe.
+ */
+export function isRepeatOfLastExecuted(
+  planned: AgentAction,
+  lastExecuted: LastExecutedAction | null,
+): boolean {
+  if (lastExecuted === null) return false;
+  if (planned.action === 'SCROLL' || lastExecuted.action === 'SCROLL') return false;
+  if (planned.action !== lastExecuted.action) return false;
+  if (planned.action === 'NAVIGATE' || lastExecuted.action === 'NAVIGATE') return false;
+  if (
+    planned.action === 'CLICK' ||
+    planned.action === 'TYPE' ||
+    planned.action === 'SELECT'
+  ) {
+    return planned.target === lastExecuted.controlId;
+  }
+  return false;
+}
+
 async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
   const steps: AgentStepRecord[] = [];
   let actionsExecuted = 0;
+  let lastExecuted: LastExecutedAction | null = null;
   const stage = { scanMs: 0, visualMs: 0, enforceMs: 0, planMs: 0, executeMs: 0 };
   const startedAt = performance.now();
 
@@ -237,7 +278,9 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
       }
     }
 
-    // 3 — build the sanitized request.
+    // 3 — build the sanitized request, carrying the minimal non-sensitive
+    // history (the immediately previous successful action) so the planner can
+    // reason about completion from the CURRENT state plus what already ran.
     const request: RemoteAgentRequest = {
       taskObjective: options.task,
       pageOrigin,
@@ -247,6 +290,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
       aliases: enforcement.aliases,
       availableActions: [...ALLOWED_ACTION_KINDS],
       policy: { privacyMode: 'strict', navigationAllowlist: allowlist },
+      ...(lastExecuted !== null ? { lastExecutedAction: lastExecuted } : {}),
     };
 
     // 4 — firewall: the only path to egress. A deny stops the loop, visibly.
@@ -278,6 +322,16 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
       steps.push({ index, action: null, outcome: 'no_action', ok: true });
       return stop('completed');
     }
+    // Pre-execution repeat guard: the planner proposed the exact same non-scroll
+    // action that just succeeded. The page re-observation did not show progress,
+    // so running it again cannot help — stop BEFORE the duplicate executes. The
+    // post-execution exact-match guard below stays as the fail-safe for shapes
+    // this metadata check cannot distinguish (e.g. NAVIGATE targets).
+    if (isRepeatOfLastExecuted(action, lastExecuted)) {
+      steps.push({ index, action, outcome: 'NO_PROGRESS', ok: false });
+      options.onEvent?.({ type: 'STEP', code: 'NO_PROGRESS', index });
+      return stop('max_steps', 'NO_PROGRESS');
+    }
     const executeStartedAt = performance.now();
     let outcome: ExecuteOutcome;
     try {
@@ -293,6 +347,7 @@ async function runLoop(options: AgentLoopOptions): Promise<AgentRunResult> {
     options.onEvent?.({ type: 'STEP', code: outcome, index });
 
     if (!ok) return stop('error', outcome);
+    lastExecuted = toLastExecutedAction(action);
 
     // Navigation settle: the tab is loading a new document; give it a moment before
     // the next observation (the scan relay's own injection retries handle the rest).
