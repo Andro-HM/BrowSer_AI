@@ -83,4 +83,23 @@ describe('built extension (dist/)', () => {
       expect(existsSync(distPath(ref)), `panel asset ${ref} exists`).toBe(true);
     }
   });
+
+  it('permits local data: raster decoding in connect-src without weakening script-src/object-src', () => {
+    // Live blocker: raster.ts decodes the local viewport capture via
+    // fetch(data:image/png;base64,…), which the extension_pages CSP blocked.
+    // `data:` belongs in connect-src ONLY — script-src/object-src stay locked down.
+    const csp = (manifest.content_security_policy ?? {}) as Record<string, unknown>;
+    const pages = csp.extension_pages;
+    expect(typeof pages).toBe('string');
+    const directives = Object.fromEntries(
+      (pages as string).split(';').map((part) => {
+        const [name, ...rest] = part.trim().split(/\s+/);
+        return [name, rest];
+      }),
+    ) as Record<string, string[]>;
+    expect(directives['connect-src']).toContain('data:');
+    expect(directives['connect-src']).toContain("'self'");
+    expect(directives['script-src']).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    expect(directives['object-src']).toEqual(["'self'"]);
+  });
 });

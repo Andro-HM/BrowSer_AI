@@ -22,9 +22,14 @@ export default defineManifest({
   // wasm compilation ONLY; no remote/eval script is allowed. All OCR assets
   // (worker, wasm core, language data) are packaged and loaded from the extension
   // origin ('self') — never from a network origin (CONTRIBUTING.md §5, §9).
+  // Raster decoding (`fetch(data:…)` of the local viewport capture in
+  // `perception/visual/raster.ts`) is same-document local decoding, not network
+  // egress: `data:` is therefore allowlisted in `connect-src` ONLY so the local
+  // screenshot can be decoded. `script-src`/`object-src` are unchanged, no remote
+  // origin is added, and captured pixels still never leave the device (§5, §9).
   content_security_policy: {
     extension_pages:
-      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https://generativelanguage.googleapis.com",
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' data: http://localhost:8000 http://127.0.0.1:8000 https://generativelanguage.googleapis.com",
   },
   background: {
     service_worker: 'extension/src/background/index.ts',
